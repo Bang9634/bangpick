@@ -1,6 +1,6 @@
 # GPU Worker 초기 패키지
 
-Python 3.11 이상용 패키지와 `bangpick-worker` 실행 진입점만 제공합니다. 기본 Docker 이미지는 Python 3.11을 사용합니다. 작업 조회·파일 전송·전처리·학습·후처리는 아직 구현하지 않았습니다. 현재 실행은 scaffold 상태를 한 번 출력하고 정상 종료합니다.
+Python 3.11 이상용 패키지와 `bangpick-worker` 실행 진입점을 제공합니다. 현재 실행은 scaffold 상태를 한 번 출력하고 정상 종료합니다. 전체 구현 범위는 [개발 안내](../docs/development.md#현재-구현-상태)를 참고합니다.
 
 ```sh
 python3 -m venv .venv

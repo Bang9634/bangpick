@@ -1,6 +1,6 @@
 # 프론트엔드
 
-React + TypeScript + Vite로 생성한 초기 프로젝트입니다. 소개용 시작 화면만 있으며 매물·지도·투어 UI는 아직 없습니다.
+React + TypeScript + Vite 프론트엔드 프로젝트입니다. 현재 구현 범위는 [개발 안내](../docs/development.md#현재-구현-상태)를 참고합니다.
 
 ```sh
 npm ci

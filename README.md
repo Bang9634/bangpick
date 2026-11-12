@@ -8,6 +8,7 @@
   <a href="#프로젝트-소개">소개</a> ·
   <a href="#공간을-둘러보는-경험">서비스 경험</a> ·
   <a href="#기술적-접근">기술적 접근</a> ·
+  <a href="#시스템-구성">설계</a> ·
   <a href="docs/README.md">문서</a>
 </p>
 
@@ -39,9 +40,21 @@ bangpick은 **3D Gaussian Splatting으로 재구성한 실내 공간과 부동�
 
 3DGS의 시각적 재현은 실제 공간의 치수·구조 정확성을 보증하지 않습니다. 시각적 장면, 이동 가능 영역, 실측 정보를 구분하는 것을 원칙으로 합니다.
 
+## 시스템 구성
+
+![bangpick 시스템 구성도](docs/diagrams/system-overview.svg)
+
+백엔드는 매물·권한·작업 상태를 관리하고, 원본 영상과 투어 파일은 오브젝트 스토리지에 보관합니다. 독립된 GPU Worker가 재구성을 수행하며 브라우저는 공개된 결과를 불러와 렌더링합니다. 파일 전송은 백엔드의 허가를 거칩니다.
+
+스토리지 공급자 연동은 별도 어댑터로 분리하고, 업무 로직과 자산 식별자가 특정 공급자의 SDK·임시 URL에 종속되지 않도록 설계합니다. 그림은 목표 구조이며 초기 프로젝트 구성 이후의 기능은 아직 구현 전입니다.
+
+자세한 흐름과 설계 원칙은 [시스템 설계](docs/architecture.md), 보고서에 재사용할 SVG·PNG와 편집 원본은 [시각 자료 모음](docs/diagrams/README.md)에서 확인할 수 있습니다.
+
 ## 문서
 
 - [프로젝트 정의](docs/project.md)
+- [시스템 설계와 처리 흐름](docs/architecture.md)
+- [설계 시각 자료](docs/diagrams/README.md)
 - [개발 환경과 실행 안내](docs/development.md)
 - [Docker 실행 안내](infra/README.md)
 - [기술 결정 기록](docs/decisions/README.md)
