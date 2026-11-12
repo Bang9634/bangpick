@@ -1,0 +1,86 @@
+# Operating system files
+.DS_Store
+._*
+.AppleDouble/
+.LSOverride
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/
+
+# Environment variables (keep shareable examples)
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+.direnv/
+
+# Credentials and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+.aws/
+.ssh/
+credentials.json
+service-account*.json
+
+# Local editor settings and temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.tmp
+*.log
+
+# Local AI context (shared AGENTS.md files are versioned)
+/.ai-context/
+
+# JavaScript / TypeScript
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Java / Gradle / Maven
+.gradle/
+target/
+*.class
+
+# Local data, uploads, and generated reconstruction assets
+/data/
+/datasets/
+/uploads/
+/outputs/
+/exports/
+/checkpoints/
+
+# Local database files
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm

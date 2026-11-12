@@ -1,0 +1,12 @@
+name: bangpick-worker
+
+services:
+  worker:
+    build:
+      context: ../gpu-worker
+    volumes:
+      - worker-work:/work
+    restart: "no"
+
+volumes:
+  worker-work:

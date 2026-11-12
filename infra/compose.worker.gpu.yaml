@@ -1,0 +1,4 @@
+# GPU allocation only. The training runtime is not installed in the scaffold image.
+services:
+  worker:
+    gpus: all

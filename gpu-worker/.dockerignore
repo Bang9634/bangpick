@@ -1,0 +1,12 @@
+.venv
+venv
+__pycache__
+*.egg-info
+build
+dist
+.env
+.env.*
+data
+outputs
+checkpoints
+*.log
