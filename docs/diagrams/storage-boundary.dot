@@ -1,0 +1,25 @@
+digraph StorageBoundary {
+  graph [rankdir=TB, bgcolor="white", pad=0.45, nodesep=0.65, ranksep=0.65,
+    label="bangpick | 스토리지 교체를 위한 의존성 경계\n구현 방향 제안 · 2026-11-12", labelloc=t, labeljust=l,
+    fontsize=23, fontcolor="#0f172a"];
+  node [shape=box, style="rounded,filled", color="#cbd5e1", fillcolor="#f8fafc",
+    fontcolor="#0f172a", fontsize=13, margin="0.23,0.18", penwidth=1.2];
+  edge [color="#64748b", fontcolor="#475569", fontsize=11, arrowsize=0.8, penwidth=1.3];
+
+  usecase [label="백엔드 업무 로직\n업로드 / 검수 / 원본 삭제\n공급자 SDK를 직접 호출하지 않음", fillcolor="#f0fdfa", color="#2dd4bf"];
+  port [label="애플리케이션 소유 인터페이스\n접근 수단 발급 / 객체 확인 / 삭제\n실제 필요한 기능부터 정의", fillcolor="#eff6ff", color="#60a5fa"];
+  oci [label="OCI 어댑터\nSDK · 인증 · 예외 변환\nOCI 전용 동작 격리", fillcolor="#fff7ed", color="#fb923c"];
+  future [label="다른 공급자 어댑터\n필요할 때 추가\n같은 업무 계약 충족 여부 검증", style="rounded,dashed,filled"];
+  cloud [label="외부 오브젝트 스토리지\n실제 버킷·객체·접근 정책", fillcolor="#fff7ed", color="#fb923c"];
+  note [shape=plain, fontsize=12, fontcolor="#475569",
+    label="교체와 별도로 확인할 사항\n기존 객체 이전 · 저장 위치 매핑\n브라우저 전송 / 권한 / 비용\n공급자별 기능 차이와 롤백"];
+
+  usecase -> port [label="의존 / 호출"];
+  oci -> port [label="구현", style=dashed, arrowhead=empty];
+  future -> port [label="구현", style=dashed, arrowhead=empty];
+  port -> oci [style=invis];
+  oci -> cloud [label="공급자 API 호출"];
+  future -> cloud [label="공급자 API 호출", style=dashed];
+  cloud -> note [style=invis];
+  {rank=same; oci; future;}
+}
