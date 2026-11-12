@@ -53,7 +53,7 @@ bangpick은 **3D Gaussian Splatting으로 재구성한 실내 공간과 부동�
 | 구성원 | 주 담당 영역 |
 | --- | --- |
 | [@Bang9634](https://github.com/Bang9634) | 웹, 기초 백엔드, 서비스 흐름 및 DB 설계 |
-| A | 3DGS 입력 전처리·재구성 및 결과물 정리 |
-| B | GPU 인프라 구성 및 최적화 |
+| [@skdks2525](https://github.com/skdks2525) | 3DGS 입력 전처리·재구성 및 결과물 정리 |
+| [SeongJunKim (@snw-stack)](https://github.com/snw-stack) | GPU 인프라 구성 및 최적화 |
 
-담당 영역은 고정된 작업 경계가 아니며 서로 개발과 검증을 지원합니다. A·B는 GitHub 아이디 등록 전 임시 표기입니다.
+담당 영역은 고정된 작업 경계가 아니며 서로 개발과 검증을 지원합니다.
