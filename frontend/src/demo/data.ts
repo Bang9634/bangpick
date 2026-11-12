@@ -52,5 +52,8 @@ export const demoModel = {
   rotation: [Math.PI, 0, 0] as [number, number, number],
   initialPosition: null as [number, number, number] | null,
   initialTarget: null as [number, number, number] | null,
+  // 현재 방 모델에서 시작 위치는 그대로 두고 실내를 향하게 한다. 회전 적용 후 뷰어 좌표 기준.
+  initialDirection: [0, -1, 0] as [number, number, number],
+  initialUp: [0, 0, -1] as [number, number, number],
   moveSpeed: 1.2,
 }

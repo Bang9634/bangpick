@@ -51,7 +51,7 @@ export default function RoomViewer() {
         renderer.setClearColor('#151c20')
         const canvas = renderer.domElement
         canvas.tabIndex = 0
-        canvas.setAttribute('aria-label', '3D 방 뷰어. 드래그로 시선 변경, WASD 이동, Q E 높이 조절, R 초기화')
+        canvas.setAttribute('aria-label', '3D 방 뷰어. 드래그로 시선 변경, WASD 카메라 방향으로 비행, Q E 화면 기준 상하 이동, R 초기화')
         host.appendChild(canvas)
         const scene = new THREE.Scene()
         const camera = new THREE.PerspectiveCamera(65, 1, 0.01, 1000)
@@ -86,8 +86,9 @@ export default function RoomViewer() {
         }, { signal })
         canvas.addEventListener('pointermove', (event) => {
           if (!pointer || pointer.id !== event.pointerId) return
-          camera.rotation.y -= (event.clientX - pointer.x) * 0.003
-          camera.rotation.x = THREE.MathUtils.clamp(camera.rotation.x - (event.clientY - pointer.y) * 0.003, -1.52, 1.52)
+          // 자유 비행: 월드의 수직축 대신 현재 카메라의 위·오른쪽 축으로 시선을 돌린다.
+          camera.rotateY(-(event.clientX - pointer.x) * 0.003)
+          camera.rotateX(-(event.clientY - pointer.y) * 0.003)
           pointer.x = event.clientX
           pointer.y = event.clientY
         }, { signal })
@@ -131,8 +132,9 @@ export default function RoomViewer() {
           const size = bounds.getSize(new THREE.Vector3())
           camera.position.copy(center)
           if (demoModel.initialPosition) camera.position.set(...demoModel.initialPosition)
+          camera.up.set(...demoModel.initialUp).normalize()
           if (demoModel.initialTarget) camera.lookAt(new THREE.Vector3(...demoModel.initialTarget))
-          else camera.lookAt(camera.position.clone().add(new THREE.Vector3(0, 0, -1)))
+          else camera.lookAt(camera.position.clone().add(new THREE.Vector3(...demoModel.initialDirection)))
           camera.far = Math.max(1000, size.length() * 3)
           camera.updateProjectionMatrix()
           keys.clear()
@@ -151,7 +153,8 @@ export default function RoomViewer() {
           lastTime = time
           movement.set(Number(keys.has('KeyD')) - Number(keys.has('KeyA')), Number(keys.has('KeyE')) - Number(keys.has('KeyQ')), Number(keys.has('KeyS')) - Number(keys.has('KeyW')))
           if (movement.lengthSq()) {
-            movement.normalize().applyAxisAngle(THREE.Object3D.DEFAULT_UP, camera.rotation.y)
+            // 전후·좌우·상하는 모두 카메라 로컬 좌표. pitch·roll도 이동 방향에 반영한다.
+            movement.normalize().applyQuaternion(camera.quaternion)
             const speed = demoModel.moveSpeed * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 2 : 1)
             camera.position.addScaledVector(movement, delta * speed)
           }
@@ -193,7 +196,7 @@ export default function RoomViewer() {
       {state === 'error' && <div className="demo-viewer-status" role="alert"><span className="demo-error-symbol" aria-hidden="true">!</span><h3>방을 열 수 없습니다</h3><p>{error}</p><button className="demo-primary" onClick={() => setAttempt((value) => value + 1)}>다시 불러오기</button></div>}
       {state === 'ready' && <>
         <div className="demo-viewer-actions"><button onClick={() => actions.current?.reset()}>처음 위치 <kbd>R</kbd></button><button onClick={() => actions.current?.flip()}>위아래 반전</button></div>
-        <div className="demo-viewer-help"><span>드래그 <b>시선 변경</b></span><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동</span><span><kbd>Q</kbd><kbd>E</kbd> 높이</span><span>휠 앞뒤 이동</span><small>자유 탐색 데모 · 벽 충돌·실내 이동 제한 없음</small></div>
+        <div className="demo-viewer-help"><span>드래그 <b>시선 변경</b></span><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 시선 기준 비행</span><span><kbd>Q</kbd><kbd>E</kbd> 화면 기준 상하</span><span>휠 앞뒤 이동</span><small>자유 탐색 데모 · 벽 충돌·실내 이동 제한 없음</small></div>
       </>}
     </div>
   )
