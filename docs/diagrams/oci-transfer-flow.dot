@@ -1,0 +1,90 @@
+digraph OciTransferFlow {
+  graph [layout=neato, overlap=true, splines=line, outputorder=edgesfirst,
+    bgcolor="white", pad=0.28, labelloc=t, labeljust=l, fontcolor="#0f172a",
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2">
+      <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="25">bangpick | OCI 영상·PLY 전송</FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="14" COLOR="#475569">개발 전송 흐름 · 2026-11-16</FONT></TD></TR>
+    </TABLE>>];
+
+  // 참여자 열: 브라우저 1.3 / 백엔드 4.1 / OCI 6.9 / Worker 9.7.
+  // 고정 위치를 사용해 모든 화살표를 같은 열에 맞추고 위에서 아래로 읽는다.
+  node [shape=point, width=0.018, height=0.018, label="", style=invis];
+  edge [color="#cbd5e1", style=dashed, dir=none];
+  browser_top [pos="1.3,12.61!"]; browser_end [pos="1.3,2.04!"]; browser_top -> browser_end;
+  api_top [pos="4.1,12.61!"]; api_end [pos="4.1,2.04!"]; api_top -> api_end;
+  oci_top [pos="6.9,12.61!"]; oci_end [pos="6.9,2.04!"]; oci_top -> oci_end;
+  worker_top [pos="9.7,12.61!"]; worker_end [pos="9.7,2.04!"]; worker_top -> worker_end;
+
+  edge [color="#e2e8f0", style=solid, dir=none];
+  divider1_left [pos="0.12,9.12!"]; divider1_right [pos="10.88,9.12!"]; divider1_left -> divider1_right;
+  divider2_left [pos="0.12,4.21!"]; divider2_right [pos="10.88,4.21!"]; divider2_left -> divider2_right;
+  divider3_left [pos="0.12,1.99!"]; divider3_right [pos="10.88,1.99!"]; divider3_left -> divider3_right;
+
+  edge [color="#64748b", dir=forward, penwidth=1.3, arrowsize=0.72];
+  // 01. 작업 생성에서 원본 저장 확인까지.
+  a1 [pos="1.3,11.71!"]; b1 [pos="4.1,11.71!"]; a1 -> b1;
+  b2 [pos="4.1,11.28!"]; c2 [pos="6.9,11.28!"]; b2 -> c2;
+  b3 [pos="4.1,10.85!"]; a3 [pos="1.3,10.85!"]; b3 -> a3;
+  a4 [pos="1.3,10.42!"]; c4 [pos="6.9,10.42!"]; a4 -> c4 [color="#047857", penwidth=3, arrowsize=0.86];
+  a5 [pos="1.3,9.99!"]; b5 [pos="4.1,9.99!"]; a5 -> b5;
+  b6 [pos="4.1,9.56!"]; c6 [pos="6.9,9.56!"]; b6 -> c6;
+  // 02. Worker 점유, 원본 다운로드, 결과 업로드.
+  d7 [pos="9.7,8.36!"]; b7 [pos="4.1,8.36!"]; d7 -> b7;
+  b8 [pos="4.1,7.95!"]; c8 [pos="6.9,7.95!"]; b8 -> c8;
+  b9 [pos="4.1,7.54!"]; d9 [pos="9.7,7.54!"]; b9 -> d9;
+  c10 [pos="6.9,7.13!"]; d10 [pos="9.7,7.13!"]; c10 -> d10 [color="#047857", penwidth=3, arrowsize=0.86];
+  d11 [pos="9.7,6.72!"]; b11 [pos="4.1,6.72!"]; d11 -> b11;
+  b12 [pos="4.1,6.31!"]; c12 [pos="6.9,6.31!"]; b12 -> c12;
+  b13 [pos="4.1,5.9!"]; d13 [pos="9.7,5.9!"]; b13 -> d13;
+  d14 [pos="9.7,5.49!"]; c14 [pos="6.9,5.49!"]; d14 -> c14 [color="#047857", penwidth=3, arrowsize=0.86];
+  d15 [pos="9.7,5.08!"]; b15 [pos="4.1,5.08!"]; d15 -> b15;
+  b16 [pos="4.1,4.67!"]; c16 [pos="6.9,4.67!"]; b16 -> c16;
+  // 03. 등록된 결과 미리보기. Worker 호출 없음.
+  a17 [pos="1.3,3.51!"]; b17 [pos="4.1,3.51!"]; a17 -> b17;
+  b18 [pos="4.1,3.1!"]; c18 [pos="6.9,3.1!"]; b18 -> c18;
+  b19 [pos="4.1,2.69!"]; a19 [pos="1.3,2.69!"]; b19 -> a19;
+  c20 [pos="6.9,2.28!"]; a20 [pos="1.3,2.28!"]; c20 -> a20 [color="#047857", penwidth=3, arrowsize=0.86];
+
+  node [shape=box, width=0, height=0, style="rounded,filled", margin="0.18,0.1",
+    fontcolor="#0f172a", penwidth=1.2, fontsize=15];
+  browser [pos="1.3,12.89!", label="사용자 브라우저", color="#60a5fa", fillcolor="#eff6ff"];
+  api [pos="4.1,12.89!", label="Java 백엔드", color="#2dd4bf", fillcolor="#f0fdfa"];
+  oci [pos="6.9,12.89!", label="OCI Object Storage", color="#fb923c", fillcolor="#fff7ed"];
+  worker [pos="9.7,12.89!", label="Python Worker", color="#c084fc", fillcolor="#faf5ff"];
+
+  node [shape=box, style=filled, fillcolor="white", color="white", margin="0.045,0.015", fontsize=13];
+  phase1 [pos="1.53,12.27!", label=<<B>01  원본 영상 업로드</B>>];
+  state1 [pos="8.81,12.27!", label="MySQL  ·  UPLOADING → QUEUED", fontcolor="#475569", fontsize=12];
+  msg1 [pos="2.7,11.89!", label="작업 생성 요청 · 파일 형식과 크기"];
+  msg2 [pos="5.5,11.46!", label="원본 쓰기 URL 발급 요청"];
+  msg3 [pos="2.7,11.03!", label="작업 ID와 쓰기 URL 반환"];
+  msg4 [pos="4.1,10.6!", label=<<B>PUT  원본 영상</B>>, fontcolor="#047857"];
+  msg5 [pos="2.7,10.17!", label="영상 업로드 완료 통보"];
+  msg6 [pos="5.5,9.74!", label="쓰기 URL 회수 · 객체 크기 확인"];
+
+  phase2 [pos="1.53,8.9!", label=<<B>02  Worker의 입력·결과 전송</B>>];
+  state2 [pos="8.6,8.9!", label="MySQL  ·  PROCESSING → RESULT_READY", fontcolor="#475569", fontsize=12];
+  msg7 [pos="6.9,8.54!", label="작업 점유 요청"];
+  msg8 [pos="5.5,8.13!", label="원본 읽기 URL 발급 요청"];
+  msg9 [pos="6.9,7.72!", label="점유 ID와 읽기 URL 반환"];
+  msg10 [pos="8.3,7.31!", label=<<B>GET  원본 영상</B>>, fontcolor="#047857"];
+  msg11 [pos="6.9,6.9!", label="준비된 로컬 PLY의 쓰기 URL 요청"];
+  msg12 [pos="5.5,6.49!", label="결과 쓰기 URL 발급 요청"];
+  msg13 [pos="6.9,6.08!", label="결과 쓰기 URL 반환"];
+  msg14 [pos="8.3,5.67!", label=<<B>PUT  결과 PLY</B>>, fontcolor="#047857"];
+  msg15 [pos="6.9,5.26!", label="PLY 업로드 완료 보고"];
+  msg16 [pos="5.5,4.85!", label="쓰기 URL 회수 · 객체 크기 확인"];
+
+  phase3 [pos="1.53,4.02!", label=<<B>03  브라우저 PLY 미리보기</B>>];
+  state3 [pos="8.61,4.02!", label="MySQL  ·  작업 소유자와 결과 키 조회", fontcolor="#475569", fontsize=12];
+  msg17 [pos="2.7,3.69!", label="작업 ID로 미리보기 요청"];
+  msg18 [pos="5.5,3.28!", label="결과 읽기 URL 발급 요청"];
+  msg19 [pos="2.7,2.87!", label="결과 읽기 URL 반환"];
+  msg20 [pos="4.1,2.46!", label=<<B>GET  결과 PLY → 브라우저에서 렌더링</B>>, fontcolor="#047857"];
+
+  node [margin="0.12,0.055", fontsize=12];
+  legend_api [pos="3.05,1.71!", label="회색 화살표  ·  API 요청 또는 응답", fontcolor="#475569"];
+  legend_file [pos="7.36,1.71!", label="초록 화살표  ·  실제 파일 이동 방향", fontcolor="#047857"];
+  note [pos="5.5,1.37!", fontsize=12, fontcolor="#475569",
+    label="GET 화살표는 응답 본문의 방향입니다. 미리보기에는 Worker가 참여하지 않습니다."];
+}

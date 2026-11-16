@@ -10,13 +10,13 @@ digraph ReconstructionFlow {
   upload [label="02  브라우저 → 스토리지\n제한된 권한으로 원본 직접 업로드"];
   verify [label="03  백엔드\n업로드 완료 확인 · 객체 검증\n확인된 입력으로 작업 등록", fillcolor="#f0fdfa", color="#2dd4bf"];
   process [label="04  GPU Worker\n작업 점유 · 입력 다운로드\n전처리 → 학습 → 후처리", fillcolor="#faf5ff", color="#c084fc"];
-  result [label="05  Worker → 스토리지 / 백엔드\n결과 묶음 업로드 · 완료 보고\n모델 + 이동 제한 데이터 + 미리보기"];
-  review [label="06  검수\n모델·뷰어·이동 제한 확인\n학습 완료와 공개 상태 분리", fillcolor="#fff7ed", color="#fb923c"];
+  result [label="05  Worker\n스토리지에 결과 묶음 업로드\n백엔드에 완료 보고"];
+  review [label="06  검수\n모델·시작 카메라·이동 제한 확인", fillcolor="#fff7ed", color="#fb923c"];
   publish [label="07  백엔드\n승인된 결과 버전을 투어에 연결", fillcolor="#f0fdfa", color="#2dd4bf"];
   viewer [label="08  방문자 브라우저\n공개 결과 조회 · 3D 탐색\n허용된 영역 안에서 이동", fillcolor="#eff6ff", color="#60a5fa"];
   retry [label="처리 실패\n오류 기록 · 재시도 가능 여부 판단\n미완성 결과는 공개하지 않음", fillcolor="#fff1f2", color="#fda4af", fontsize=12];
   rejected [label="검수 반려\n원인 확인 후 수정·재처리\n미검수 결과는 공개하지 않음", fillcolor="#fff1f2", color="#fda4af", fontsize=12];
-  retention [label="원본 보관 정책\n검수 승인 시각부터 7일 후 삭제\n최종 투어 파일은 유지", fillcolor="#fff7ed", color="#fb923c", fontsize=12];
+  retention [label="일반 매물 원본 보관\n검수 승인 시각부터 7일 후 삭제\n최종 투어 파일은 유지", fillcolor="#fff7ed", color="#fb923c", fontsize=12];
 
   request -> upload [label="권한 확인 · 접근 수단 발급"];
   upload -> verify [label="완료 통보 후 실제 객체 확인"];

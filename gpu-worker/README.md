@@ -1,11 +1,25 @@
-# GPU Worker 초기 패키지
+# GPU Worker
 
-Python 3.11 이상용 패키지와 `bangpick-worker` 실행 진입점을 제공합니다. 현재 실행은 scaffold 상태를 한 번 출력하고 정상 종료합니다. 전체 구현 범위는 [개발 안내](../docs/development.md#현재-구현-상태)를 참고합니다.
+Worker는 지정한 작업 하나를 처리하는 전송 CLI입니다. 백엔드에서 작업을 점유하고, 임시 URL로 원본 영상 다운로드와 로컬 3DGS PLY 업로드를 수행합니다. 명령 실행에 GPU는 필요하지 않습니다.
+
+Python 3.11 이상에서 `pyproject.toml`이 있는 디렉토리에서 환경을 준비합니다.
 
 ```sh
-python3 -m venv .venv
+python -m venv .venv
 .venv/bin/python -m pip install -e .
-.venv/bin/bangpick-worker
 ```
 
-명령은 이 디렉토리에서 실행합니다. Windows는 `.venv\Scripts\python.exe`와 해당 scripts 경로를 사용합니다. 의존성은 아직 없으며 실제 학습 도구·CUDA 환경을 정한 뒤 별도로 명세합니다. 기본 실행에 GPU가 필요한 것은 아닙니다. 컨테이너 실행은 [인프라 안내](../infra/README.md)를 참고합니다.
+Windows에서는 `.venv\Scripts\python.exe -m pip install -e .`를 실행하고, 아래의 `.venv/bin/bangpick-worker` 대신 `.venv\Scripts\python.exe -m bangpick_worker`를 사용합니다.
+
+Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 지정합니다. API 주소는 `/api`로 끝나야 하고, 같은 컴퓨터 또는 터널의 루프백 주소만 HTTP를 허용합니다. 예를 들어 맥에서 백엔드를 켜고 윈도우에서 보호된 터널을 통해 맥의 8080으로 연결하면 Worker 주소는 터널의 로컬 포트가 됩니다. 원격 API 주소를 직접 사용하려면 HTTPS가 필요합니다.
+
+[영상 업로드 API](../contracts/README.md#영상ply-전송)가 반환한 작업 UUID를 쓰고, 두 명령에서 같은 작업 폴더를 지정합니다.
+
+```sh
+.venv/bin/bangpick-worker download <job-id> --work-dir ../outputs/worker
+.venv/bin/bangpick-worker upload <job-id> ./room.ply --work-dir ../outputs/worker
+```
+
+작업 폴더의 `<job-id>/source.*`가 다운로드한 영상이고, `lease` 파일은 다음 요청에 필요한 현재 점유 ID입니다. 작업 폴더·실제 모델·개발용 토큰을 커밋하지 않습니다. 이미 업로드가 끝났는데 완료 응답만 실패했다면 같은 인자로 `complete <job-id> --work-dir ../outputs/worker`를 실행합니다. PLY 업로드가 실패했다면 `upload`를 재실행해 새 URL을 받습니다.
+
+백엔드 API와 Worker는 JSON을 주고받고, 파일은 Worker가 OCI와 HTTPS로 직접 전송합니다. Worker에 OCI 키를 복사하거나 수신 포트를 열 필요는 없습니다. [전송 계약](../contracts/README.md#영상ply-전송) 참고.

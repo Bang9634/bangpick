@@ -24,6 +24,7 @@ $RECYCLE.BIN/
 *.jks
 *.keystore
 .aws/
+.oci/
 .ssh/
 credentials.json
 service-account*.json

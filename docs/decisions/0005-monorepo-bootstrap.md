@@ -16,7 +16,7 @@ frontend/, backend/, gpu-worker/, contracts/, infra/, docs/, .github/를 한 저
 
 ## 범위와 이유
 
-현재는 프로젝트 생성까지만 진행합니다. 매물·인증·작업 소비·OCI·지도·뷰어·3DGS 학습 로직을 구현하지 않습니다. 초기 Worker의 Python 환경은 팀원의 기존 학습 환경을 교체한 결정이 아닙니다. 실제 학습 도구를 실행하는 환경은 재현 실험 기준으로 별도 선정합니다.
+이 결정은 초기 프로젝트 생성과 독립 Docker 구성에 관한 기록입니다. Worker 초기 Python 환경과 팀원의 [학습 실험 환경](../experiments/0001-room-reconstruction.md)은 별개입니다. 현재 코드 범위는 [개발 안내](../development.md)에 기록합니다.
 
 Maven과 Gradle은 Spring Boot에서 모두 사용 가능하지만 현재 규모에서는 팀의 익숙함을 우선합니다. 모노레포를 위해 Gradle·Node 워크스페이스·별도 빌드 오케스트레이터를 도입할 필요는 없습니다.
 

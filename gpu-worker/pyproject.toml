@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bangpick-gpu-worker"
 version = "0.1.0"
-description = "Bootstrap entry point for the bangpick reconstruction worker"
+description = "Object transfers for the bangpick reconstruction worker"
 requires-python = ">=3.11"
 dependencies = []
 

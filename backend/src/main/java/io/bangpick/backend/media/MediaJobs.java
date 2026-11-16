@@ -1,0 +1,185 @@
+package io.bangpick.backend.media;
+
+import static io.bangpick.backend.media.MediaStorage.Access.READ;
+import static io.bangpick.backend.media.MediaStorage.Access.WRITE;
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+
+import io.bangpick.backend.media.MediaJob.Status;
+import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+class MediaJobs {
+    private static final long MAX_VIDEO = 512L * 1024 * 1024;
+    private static final long MAX_PLY = 256L * 1024 * 1024;
+    private static final Duration LEASE_DURATION = Duration.ofHours(6);
+    private static final Duration READ_GRANT_DURATION = Duration.ofMinutes(5);
+    private static final Duration WRITE_GRANT_DURATION = Duration.ofMinutes(15);
+    private static final Map<String, String> VIDEO_EXTENSIONS = Map.of(
+            "video/mp4", ".mp4", "video/quicktime", ".mov", "video/webm", ".webm");
+
+    record Transfer(URI url, String method, Instant expiresAt, long sizeBytes) {
+        @Override public String toString() { return "Transfer[method=" + method + ", sizeBytes=" + sizeBytes + "]"; }
+    }
+    record Upload(UUID jobId, Transfer transfer) {}
+    record Claim(UUID leaseId, Instant leaseExpiresAt, String extension, Transfer transfer) {
+        @Override public String toString() { return "Claim[leaseExpiresAt=" + leaseExpiresAt + "]"; }
+    }
+    record JobView(UUID jobId, Status status) {}
+
+    private final MediaJobRepository repository;
+    private final MediaStorage storage;
+
+    MediaJobs(MediaJobRepository repository, MediaStorage storage) {
+        this.repository = repository;
+        this.storage = storage;
+    }
+
+    @Transactional
+    public Upload start(String owner, String type, Long bytes) {
+        if (type == null || !VIDEO_EXTENSIONS.containsKey(type)) {
+            throw new ResponseStatusException(BAD_REQUEST, "Choose an MP4, MOV or WebM video");
+        }
+        checkSize(bytes, MAX_VIDEO);
+        UUID id = UUID.randomUUID();
+        Instant expires = Instant.now().plus(WRITE_GRANT_DURATION);
+        String key = inputKey(id, type);
+        var grant = storage.grant(key, WRITE, expires);
+        repository.insertUpload(id, owner, type, bytes, grant.id(), expires);
+        return new Upload(id, new Transfer(grant.url(), "PUT", expires, bytes));
+    }
+
+    @Transactional
+    public JobView finishInput(String owner, UUID id) {
+        MediaJob job = owned(loadForUpdate(id), owner);
+        if (job.status() != Status.UPLOADING) return view(job);
+        if (!job.uploadExpiresAt().isAfter(Instant.now())) throw conflict("Upload grant expired; start a new upload");
+        // 크기 확인 이후 같은 링크로 새 PUT 요청을 보낼 수 없도록 먼저 쓰기 권한을 회수한다.
+        storage.revoke(job.inputGrantId());
+        verifySize(inputKey(id, job.videoType()), job.videoBytes());
+        repository.markInputQueued(id);
+        return new JobView(id, Status.QUEUED);
+    }
+
+    public JobView status(String owner, UUID id) {
+        return view(owned(load(id), owner));
+    }
+
+    public Transfer preview(String owner, UUID id) {
+        MediaJob job = owned(load(id), owner);
+        if (job.status() != Status.RESULT_READY) throw conflict("The PLY result is not ready");
+        // RESULT_READY는 저장 확인 상태다. 이 링크는 소유자 전용 미리보기에 쓴다.
+        return grant(job.resultKey(), READ, Instant.now().plus(READ_GRANT_DURATION), job.resultBytes());
+    }
+
+    @Transactional
+    public Claim claim(UUID id, UUID currentLease) {
+        MediaJob job = loadForUpdate(id);
+        Instant now = Instant.now();
+        if (job.hasActiveLease(now)) {
+            // 같은 점유 ID로 다시 요청하면 읽기 링크만 새로 발급한다.
+            requireLease(job, currentLease);
+            return inputGrant(job, currentLease, job.leaseExpiresAt(), now);
+        }
+        if (job.status() != Status.QUEUED && job.status() != Status.PROCESSING) {
+            throw conflict("The job cannot be claimed");
+        }
+        storage.revoke(job.resultGrantId());
+        UUID lease = UUID.randomUUID();
+        Instant leaseExpires = now.plus(LEASE_DURATION);
+        Claim response = inputGrant(job, lease, leaseExpires, now);
+        repository.assignLease(id, lease, leaseExpires);
+        return response;
+    }
+
+    @Transactional
+    public Transfer startResult(UUID id, UUID lease, Long bytes) {
+        checkSize(bytes, MAX_PLY);
+        MediaJob job = loadForUpdate(id);
+        requireLease(job, lease);
+        requireActiveLease(job);
+        storage.revoke(job.resultGrantId());
+        Instant writeDeadline = Instant.now().plus(WRITE_GRANT_DURATION).truncatedTo(ChronoUnit.SECONDS);
+        Instant expires = writeDeadline.isBefore(job.leaseExpiresAt()) ? writeDeadline : job.leaseExpiresAt();
+        // 재업로드는 새 객체 키를 사용해 이전 시도의 결과 파일과 섞이지 않게 한다.
+        String key = "outputs/" + id + "/" + UUID.randomUUID() + "/room.ply";
+        var grant = storage.grant(key, WRITE, expires);
+        repository.recordResultUpload(id, grant.id(), key, bytes);
+        return new Transfer(grant.url(), "PUT", expires, bytes);
+    }
+
+    @Transactional
+    public JobView finishResult(UUID id, UUID lease) {
+        MediaJob job = loadForUpdate(id);
+        requireLease(job, lease);
+        // 완료 응답을 못 받은 Worker는 점유가 만료된 뒤에도 완료 확인만 재시도할 수 있다.
+        if (job.status() == Status.RESULT_READY) return view(job);
+        requireActiveLease(job);
+        if (job.resultGrantId() == null) throw conflict("Request a result upload grant first");
+        storage.revoke(job.resultGrantId());
+        verifySize(job.resultKey(), job.resultBytes());
+        repository.markResultReady(id);
+        return new JobView(id, Status.RESULT_READY);
+    }
+
+    private Claim inputGrant(MediaJob job, UUID lease, Instant leaseExpires, Instant now) {
+        return new Claim(lease, leaseExpires, VIDEO_EXTENSIONS.get(job.videoType()),
+                grant(inputKey(job.id(), job.videoType()), READ, now.plus(READ_GRANT_DURATION), job.videoBytes()));
+    }
+
+    private static String inputKey(UUID id, String videoType) {
+        return "inputs/" + id + "/source" + VIDEO_EXTENSIONS.get(videoType);
+    }
+
+    private Transfer grant(String key, MediaStorage.Access access, Instant expires, long bytes) {
+        return new Transfer(storage.grant(key, access, expires).url(), access == READ ? "GET" : "PUT", expires, bytes);
+    }
+
+    private void verifySize(String key, long expected) {
+        // 임시 쓰기 링크 자체는 업로드 요청에 적힌 파일 크기를 강제하지 않는다.
+        if (storage.size(key) != expected) throw conflict("Uploaded file size does not match");
+    }
+
+    private MediaJob load(UUID id) {
+        return repository.findById(id).orElseThrow(MediaJobs::missing);
+    }
+
+    private MediaJob loadForUpdate(UUID id) {
+        return repository.findByIdForUpdate(id).orElseThrow(MediaJobs::missing);
+    }
+
+    private static JobView view(MediaJob job) {
+        return new JobView(job.id(), job.status());
+    }
+
+    private static MediaJob owned(MediaJob job, String owner) {
+        if (!job.ownerId().equals(owner)) throw missing();
+        return job;
+    }
+
+    private static void requireActiveLease(MediaJob job) {
+        if (!job.hasActiveLease(Instant.now())) {
+            throw conflict("The worker lease is no longer active");
+        }
+    }
+
+    private static void requireLease(MediaJob job, UUID lease) {
+        if (lease == null || !lease.equals(job.leaseId())) throw conflict("The worker does not hold this job");
+    }
+
+    private static void checkSize(Long bytes, long max) {
+        if (bytes == null || bytes <= 0 || bytes > max) {
+            throw new ResponseStatusException(BAD_REQUEST, "The file is empty or exceeds the size limit");
+        }
+    }
+
+    private static ResponseStatusException missing() { return new ResponseStatusException(NOT_FOUND, "Job not found"); }
+    private static ResponseStatusException conflict(String reason) { return new ResponseStatusException(CONFLICT, reason); }
+}

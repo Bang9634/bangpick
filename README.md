@@ -30,35 +30,22 @@ bangpick은 **3D Gaussian Splatting으로 재구성한 실내 공간과 부동�
 
 여러 시점에서 촬영한 실내 사진·영상으로 카메라 위치를 추정하고, 3D Gaussian Splatting으로 장면의 모습을 재현합니다. 생성된 장면은 정리와 웹 제공용 변환을 거쳐 브라우저에서 탐색하는 구조입니다.
 
-```text
-다중 시점 사진·영상 → 카메라 위치 추정 → 3DGS 재구성
-                                        ↓
-                            장면 정리·웹 제공용 변환
-                                        ↓
-                          매물 정보와 연결된 웹 가상 투어
-```
-
 3DGS의 시각적 재현은 실제 공간의 치수·구조 정확성을 보증하지 않습니다. 시각적 장면, 이동 가능 영역, 실측 정보를 구분하는 것을 원칙으로 합니다.
 
 ## 시스템 구성
 
 ![bangpick 시스템 구성도](docs/diagrams/system-overview.svg)
 
-백엔드는 매물·권한·작업 상태를 관리하고, 원본 영상과 투어 파일은 오브젝트 스토리지에 보관합니다. 독립된 GPU Worker가 재구성을 수행하며 브라우저는 공개된 결과를 불러와 렌더링합니다. 파일 전송은 백엔드의 허가를 거칩니다.
+그림은 목표 구조입니다. 백엔드는 매물·권한·작업 상태를 관리하고, 원본 영상과 투어 파일은 오브젝트 스토리지에 보관합니다. 독립된 GPU Worker가 재구성을 수행하며 브라우저는 공개된 결과를 불러와 렌더링합니다. 파일 전송은 백엔드의 허가를 거칩니다.
 
-스토리지 공급자 연동은 별도 어댑터로 분리하고, 업무 로직과 자산 식별자가 특정 공급자의 SDK·임시 URL에 종속되지 않도록 설계합니다. 그림은 목표 구조이며 초기 프로젝트 구성 이후의 기능은 아직 구현 전입니다.
+스토리지 공급자 연동은 별도 어댑터로 분리하고, 업무 로직과 자산 식별자가 특정 공급자의 SDK·임시 URL에 종속되지 않도록 설계합니다. [현재 구현 범위](docs/development.md#현재-구현-상태)는 개발 안내에서 확인할 수 있습니다.
 
-자세한 흐름과 설계 원칙은 [시스템 설계](docs/architecture.md), 보고서에 재사용할 SVG·PNG와 편집 원본은 [시각 자료 모음](docs/diagrams/README.md)에서 확인할 수 있습니다.
+설계 원칙은 [시스템 설계](docs/architecture.md), 실제 영상·PLY 전송 경로는 [OCI 파일 전송 흐름도](docs/architecture.md#oci-영상ply-전송)에서 확인할 수 있습니다.
 
 ## 문서
 
-- [프로젝트 정의](docs/project.md)
-- [시스템 설계와 처리 흐름](docs/architecture.md)
-- [설계 시각 자료](docs/diagrams/README.md)
+- [문서 목차](docs/README.md)
 - [개발 환경과 실행 안내](docs/development.md)
-- [Docker 실행 안내](infra/README.md)
-- [기술 결정 기록](docs/decisions/README.md)
-- [실험 기록](docs/experiments/README.md)
 - [기여 및 협업 안내](CONTRIBUTING.md)
 
 ## 팀
@@ -69,4 +56,4 @@ bangpick은 **3D Gaussian Splatting으로 재구성한 실내 공간과 부동�
 | [@skdks2525](https://github.com/skdks2525) | 3DGS 입력 전처리·재구성 및 결과물 정리 |
 | [SeongJunKim (@snw-stack)](https://github.com/snw-stack) | GPU 인프라 구성 및 최적화 |
 
-담당 영역은 고정된 작업 경계가 아니며 서로 개발과 검증을 지원합니다.
+주 담당 영역은 작업이나 리뷰 권한을 제한하지 않습니다. 팀원은 서로 개발과 검증을 지원합니다.
