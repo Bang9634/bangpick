@@ -9,6 +9,8 @@
   <a href="#공간을-둘러보는-경험">서비스 경험</a> ·
   <a href="#기술적-접근">기술적 접근</a> ·
   <a href="#시스템-구성">설계</a> ·
+  <a href="#프로젝트-구조">프로젝트 구조</a> ·
+  <a href="infra/README.md#로컬-웹db">로컬 실행</a> ·
   <a href="docs/README.md">문서</a>
 </p>
 
@@ -41,6 +43,17 @@ bangpick은 **3D Gaussian Splatting으로 재구성한 실내 공간과 부동�
 스토리지 공급자 연동은 별도 어댑터로 분리하고, 업무 로직과 자산 식별자가 특정 공급자의 SDK·임시 URL에 종속되지 않도록 설계합니다. [현재 구현 범위](docs/development.md#현재-구현-상태)는 개발 안내에서 확인할 수 있습니다.
 
 설계 원칙은 [시스템 설계](docs/architecture.md), 실제 영상·PLY 전송 경로는 [OCI 파일 전송 흐름도](docs/architecture.md#oci-영상ply-전송)에서 확인할 수 있습니다.
+
+## 프로젝트 구조
+
+| 디렉토리 | 역할 |
+| --- | --- |
+| [`frontend/`](frontend/) | React 웹 화면과 3D 뷰어 |
+| [`backend/`](backend/) | 웹 API, MySQL 작업 상태 관리, OCI 연동 |
+| [`gpu-worker/`](gpu-worker/) | 독립 실행 Worker와 영상·PLY 전송 명령 |
+| [`contracts/`](contracts/) | 브라우저·백엔드·Worker 사이의 API 계약 |
+| [`infra/`](infra/) | Docker 실행 안내와 Worker 컨테이너 설정 |
+| [`docs/`](docs/) | 요구사항, 시스템 설계, 기술 결정과 실험 기록 |
 
 ## 문서
 
