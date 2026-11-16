@@ -48,16 +48,16 @@ docker compose down
 
 ## Worker 컨테이너
 
-Worker 초기 패키지는 GPU 없이 단독 확인할 수 있습니다. 한 번 상태를 출력하고 종료하며 작업을 대기·학습하는 서비스가 아닙니다.
+전송 명령은 GPU 없이 사용할 수 있습니다. 이 예시는 컨테이너 패키징과 명령 도움말만 확인합니다. 실제 전송은 [Worker 안내](../gpu-worker/README.md)의 환경변수와 작업 인자가 필요하고, 로컬에서는 호스트에서 실행하는 편이 간단합니다.
 
 ```sh
-docker compose -f infra/compose.worker.yaml run --build --rm worker
+docker compose -f infra/compose.worker.yaml run --build --rm worker --help
 ```
 
 Linux NVIDIA GPU 장비에서 GPU 할당 설정을 추가하는 명령은 다음과 같습니다.
 
 ```sh
-docker compose -f infra/compose.worker.yaml -f infra/compose.worker.gpu.yaml run --build --rm worker
+docker compose -f infra/compose.worker.yaml -f infra/compose.worker.gpu.yaml run --build --rm worker --help
 ```
 
 GPU override는 GPU 접근 설정만 추가합니다. NVIDIA 호스트 드라이버·Container Toolkit이 필요하며, 이미지에는 CUDA·PyTorch·COLMAP·Nerfstudio가 아직 없습니다. 실제 학습 환경은 팀의 재현 실험을 기준으로 별도 이미지와 버전을 정합니다. Worker의 작업 볼륨은 임시 작업 공간이며 공통 오브젝트 스토리지를 대체하지 않습니다.
