@@ -1,0 +1,4 @@
+.model-preview { position: relative; background: #17232c; color: white; border-radius: 8px; overflow: hidden; }
+.model-canvas { height: clamp(250px, 56vh, 560px); }
+.model-canvas canvas { display: block; }
+.model-preview > p { position: absolute; inset: 0; display: grid; place-items: center; padding: 18px; pointer-events: none; }
