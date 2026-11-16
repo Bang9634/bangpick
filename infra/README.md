@@ -60,6 +60,6 @@ Linux NVIDIA GPU 장비에서 GPU 할당 설정을 추가하는 명령은 다음
 docker compose -f infra/compose.worker.yaml -f infra/compose.worker.gpu.yaml run --build --rm worker --help
 ```
 
-GPU override는 GPU 접근 설정만 추가합니다. NVIDIA 호스트 드라이버·Container Toolkit이 필요하며, 이미지에는 CUDA·PyTorch·COLMAP·Nerfstudio가 아직 없습니다. 실제 학습 환경은 팀의 재현 실험을 기준으로 별도 이미지와 버전을 정합니다. Worker의 작업 볼륨은 임시 작업 공간이며 공통 오브젝트 스토리지를 대체하지 않습니다.
+GPU override는 컨테이너에 GPU를 할당합니다. 호스트에는 NVIDIA 드라이버와 Container Toolkit이 필요합니다. 현재 Worker 이미지는 전송용 Python 환경이며 CUDA·PyTorch·COLMAP·Nerfstudio를 포함하지 않습니다.
 
 현재 `worker-work` 볼륨을 `/work`에 연결합니다. 보존해야 하는 작업 파일은 컨테이너의 임시 쓰기 계층에만 두지 않습니다. 로컬 작업 공간의 정리와 원본 영상의 서버 보관 정책은 별개입니다.
