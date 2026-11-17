@@ -27,7 +27,10 @@ class AccountController {
 
     @GetMapping("/auth/options")
     ResponseEntity<Options> options(HttpServletRequest request) {
-        String loginPath = settings.enabled() ? request.getContextPath() + GoogleLoginConfiguration.LOGIN_PATH : null;
+        // The browser must create its OAuth session on the host that receives the callback.
+        String loginPath = settings.enabled()
+                ? settings.origin().resolve(request.getContextPath() + GoogleLoginConfiguration.LOGIN_PATH).toString()
+                : null;
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Options(loginPath));
     }
 

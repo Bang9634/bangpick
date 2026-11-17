@@ -52,11 +52,14 @@ class AccountSecurityTests {
     @MockitoBean ObjectStorageClient ociClient;
 
     @Test
-    void loginUsesThePublicCallbackAndReturnsToTheFrontendAfterConsentIsDenied() throws Exception {
-        mvc.perform(get("/api/auth/options").contextPath("/api"))
-                .andExpect(jsonPath("$.loginPath").value("/api/oauth2/authorization/google"));
+    void loginUsesTheConfiguredOriginEvenWhenThePageWasOpenedAtAnotherHost() throws Exception {
+        var options = mvc.perform(get("http://127.0.0.1:8088/api/auth/options").contextPath("/api"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.loginPath").value("http://localhost:8088/api/oauth2/authorization/google"))
+                .andReturn().getResponse();
+        String loginUrl = json.readTree(options.getContentAsString()).path("loginPath").asString();
 
-        var login = mvc.perform(get("/api/oauth2/authorization/google").contextPath("/api"))
+        var login = mvc.perform(get(loginUrl).contextPath("/api"))
                 .andExpect(status().is3xxRedirection()).andReturn();
         String location = login.getResponse().getRedirectedUrl();
         assertThat(location).startsWith("https://accounts.google.com/");

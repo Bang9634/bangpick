@@ -4,11 +4,11 @@
 
 ## 회원 세션과 관리자 API
 
-Google 로그인 시작 주소는 `GET /api/oauth2/authorization/google`입니다. Google 인증을 마친 브라우저는 콜백을 거쳐 설정된 웹 주소로 돌아옵니다. 브라우저는 API 요청에 세션 쿠키를 사용하고, 상태를 바꾸는 요청에는 `/api/auth/csrf`에서 받은 토큰을 지정된 헤더에 추가합니다.
+브라우저는 `/api/auth/options`가 제공하는 `loginPath`로 이동해 Google 로그인을 시작합니다. 이 절대 URL은 `BANGPICK_WEB_ORIGIN`과 `/api/oauth2/authorization/google`을 합친 주소입니다. Google 인증을 마친 브라우저는 같은 웹 주소의 콜백으로 돌아옵니다. 브라우저는 API 요청에 세션 쿠키를 사용하고, 상태를 바꾸는 요청에는 `/api/auth/csrf`에서 받은 토큰을 지정된 헤더에 추가합니다.
 
 | HTTP·경로 | 접근 권한 | 성공 응답 |
 | --- | --- | --- |
-| `GET /api/auth/options` | 누구나 | `{loginPath}` · 비활성화 시 `null` |
+| `GET /api/auth/options` | 누구나 | `{loginPath}` · 절대 URL 또는 로그인 비활성화 시 `null` |
 | `GET /api/me` | 로그인한 회원 | `{id, displayName, role}` · 역할은 `USER` 또는 `ADMIN` |
 | `GET /api/auth/csrf` | 로그인한 회원 | `{headerName, token}` |
 | `POST /api/auth/logout` | 세션의 CSRF 토큰 필요 | `204` |
