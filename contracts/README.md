@@ -2,13 +2,27 @@
 
 기본 경로는 `/api`입니다. `GET /api/actuator/health`는 DB 연결 상태를 포함하며 `/api/actuator/health/liveness`는 생존 확인 경로입니다.
 
+## 회원 세션과 관리자 API
+
+Google 로그인 시작 주소는 `GET /api/oauth2/authorization/google`입니다. Google 인증을 마친 브라우저는 콜백을 거쳐 설정된 웹 주소로 돌아옵니다. 브라우저는 API 요청에 세션 쿠키를 사용하고, 상태를 바꾸는 요청에는 `/api/auth/csrf`에서 받은 토큰을 지정된 헤더에 추가합니다.
+
+| HTTP·경로 | 접근 권한 | 성공 응답 |
+| --- | --- | --- |
+| `GET /api/auth/options` | 누구나 | `{loginPath}` · 비활성화 시 `null` |
+| `GET /api/me` | 로그인한 회원 | `{id, displayName, role}` · 역할은 `USER` 또는 `ADMIN` |
+| `GET /api/auth/csrf` | 로그인한 회원 | `{headerName, token}` |
+| `POST /api/auth/logout` | 세션의 CSRF 토큰 필요 | `204` |
+| `GET /api/admin/access` | 관리자 | `204` |
+
+관리자 API는 `/api/admin/**` 아래에 두며 백엔드가 요청 시점의 DB 역할을 확인합니다. 세션 없이 관리자 조회 시 `401`, 일반 회원이 접근하거나 필요한 CSRF 검증에 실패하면 `403`입니다.
+
 ## 영상·PLY 전송
 
 파일 본문은 브라우저·Worker와 오브젝트 스토리지 사이에서 직접 전송됩니다. 백엔드는 상태·소유자를 기록하고 지정한 객체에 대한 임시 접근을 발급합니다. 이 기능의 [개발 환경 설정](../backend/README.md#oci-파일-전송-개발-환경)은 별도로 켜야 합니다.
 
 API 호출 순서와 파일이 이동하는 방향은 [OCI 전송 흐름도](../docs/architecture.md#oci-영상ply-전송)에 있습니다.
 
-개발 중에는 브라우저 API와 내부 Worker API에 서로 다른 `Authorization: Bearer <token>`이 필요합니다. 브라우저 토큰은 하나의 개발 소유자에 대응합니다. Worker는 공유 개발 Worker 토큰으로 인증하고 특정 작업을 점유할 때 받은 `leaseId`로 그 작업에 대한 권한을 증명합니다. 두 토큰을 스토리지 요청에 전달하지 않습니다.
+브라우저 API는 회원 세션으로 인증하고 작업의 소유자 ID를 확인합니다. Google 로그인을 끈 로컬 환경에서는 브라우저의 개발 토큰을 공통 개발 소유자로 처리합니다. 내부 Worker API는 별도의 `Authorization: Bearer <token>`을 받고, 작업 점유 후에는 `leaseId`도 검증합니다. 백엔드의 세션 쿠키와 토큰은 스토리지 요청에 전달하지 않습니다.
 
 | 호출자 | HTTP·경로 | 요청 JSON | 성공 응답 |
 | --- | --- | --- | --- |
