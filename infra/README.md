@@ -48,7 +48,7 @@ docker compose down
 
 ## Worker 컨테이너
 
-전송 명령은 GPU 없이 사용할 수 있습니다. 이 예시는 컨테이너 패키징과 명령 도움말만 확인합니다. 실제 전송은 [Worker 안내](../gpu-worker/README.md)의 환경변수와 작업 인자가 필요하고, 로컬에서는 호스트에서 실행하는 편이 간단합니다.
+전송과 프레임 추출 명령은 GPU 없이 사용할 수 있습니다. 이 예시는 컨테이너 패키징과 명령 도움말만 확인합니다. 실제 작업을 실행하려면 [Worker 안내](../gpu-worker/README.md)의 환경 변수와 작업 인자를 지정합니다.
 
 ```sh
 docker compose -f infra/compose.worker.yaml run --build --rm worker --help
@@ -60,6 +60,6 @@ Linux NVIDIA GPU 장비에서 GPU 할당 설정을 추가하는 명령은 다음
 docker compose -f infra/compose.worker.yaml -f infra/compose.worker.gpu.yaml run --build --rm worker --help
 ```
 
-GPU override는 컨테이너에 GPU를 할당합니다. 호스트에는 NVIDIA 드라이버와 Container Toolkit이 필요합니다. 현재 Worker 이미지는 전송용 Python 환경이며 CUDA·PyTorch·COLMAP·Nerfstudio를 포함하지 않습니다.
+GPU override는 컨테이너에 GPU를 할당합니다. 호스트에는 NVIDIA 드라이버와 Container Toolkit이 필요합니다. 현재 Worker 이미지에는 전송과 프레임 추출에 필요한 Python과 FFmpeg가 들어 있습니다. CUDA·PyTorch·COLMAP·Nerfstudio 설치는 학습 환경 구성 단계에서 다룹니다.
 
 현재 `worker-work` 볼륨을 `/work`에 연결합니다. 보존해야 하는 작업 파일은 컨테이너의 임시 쓰기 계층에만 두지 않습니다. 로컬 작업 공간의 정리와 원본 영상의 서버 보관 정책은 별개입니다.
