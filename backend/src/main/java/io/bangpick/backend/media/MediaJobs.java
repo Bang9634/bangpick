@@ -149,6 +149,33 @@ class MediaJobs {
         return failAttempt(id, lease, retryable, "PROCESSING_FAILED");
     }
 
+    @Transactional
+    public JobView recoverExpired(UUID id, UUID lease, Boolean previousExecutionStopped, Boolean retryable) {
+        // 운영자 확인 선언이다. 백엔드는 외부 GPU 실행의 종료 여부를 직접 증명하지 못한다.
+        if (!Boolean.TRUE.equals(previousExecutionStopped)) {
+            throw new ResponseStatusException(BAD_REQUEST, "Confirm the previous execution has stopped");
+        }
+        if (retryable == null) throw new ResponseStatusException(BAD_REQUEST, "Specify whether the failure is retryable");
+        MediaJob job = loadForUpdate(id);
+        if (lease != null && lease.equals(job.lastFailureLeaseId())
+                && "LEASE_EXPIRED".equals(job.lastErrorCode())
+                && (job.status() == Status.QUEUED || job.status() == Status.FAILED)) return view(job);
+        requireLease(job, lease);
+        Instant now = Instant.now();
+        if (job.status() != Status.PROCESSING || job.attemptCount() < 1 || job.leaseExpiresAt() == null
+                || job.leaseExpiresAt().isAfter(now)) {
+            throw conflict("The job does not have an expired processing lease");
+        }
+        boolean retry = retryable && job.attemptCount() < MAX_ATTEMPTS;
+        Status next = retry ? Status.QUEUED : Status.FAILED;
+        Instant available = retry ? retryAt(now, job.attemptCount()) : null;
+        storage.revoke(job.resultGrantId());
+        if (repository.recordExpiredRecovery(id, lease, now, next, available) != 1) {
+            throw conflict("The expired lease changed during recovery");
+        }
+        return new JobView(id, next);
+    }
+
     private JobView failAttempt(UUID id, UUID lease, Boolean retryable, String errorCode) {
         if (retryable == null) throw new ResponseStatusException(BAD_REQUEST, "Specify whether the failure is retryable");
         MediaJob job = loadForUpdate(id);
@@ -162,9 +189,13 @@ class MediaJobs {
         }
         boolean retry = retryable && job.attemptCount() < MAX_ATTEMPTS;
         Status next = retry ? Status.QUEUED : Status.FAILED;
-        Instant available = retry ? Instant.now().plus(RETRY_DELAY.multipliedBy(1L << (job.attemptCount() - 1))) : null;
+        Instant available = retry ? retryAt(Instant.now(), job.attemptCount()) : null;
         repository.recordFailure(id, lease, next, available, errorCode);
         return new JobView(id, next);
+    }
+
+    private static Instant retryAt(Instant now, int attemptCount) {
+        return now.plus(RETRY_DELAY.multipliedBy(1L << (attemptCount - 1)));
     }
 
     @Transactional

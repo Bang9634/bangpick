@@ -81,6 +81,18 @@ final class MediaJobRepository {
                 errorCode, leaseId.toString(), id.toString(), Status.PROCESSING.name(), leaseId.toString());
     }
 
+    int recordExpiredRecovery(UUID id, UUID leaseId, Instant now, Status nextStatus, Instant availableAt) {
+        return jdbc.update("""
+                UPDATE media_jobs
+                SET status = ?, available_at = ?, lease_id = NULL, lease_expires = NULL,
+                    result_par_id = NULL, result_key = NULL, result_bytes = NULL,
+                    last_error_code = ?, last_failure_lease_id = ?
+                WHERE id = ? AND status = ? AND lease_id = ? AND lease_expires <= ?
+                """, nextStatus.name(), availableAt == null ? null : availableAt.getEpochSecond(),
+                "LEASE_EXPIRED", leaseId.toString(), id.toString(), Status.PROCESSING.name(),
+                leaseId.toString(), now.getEpochSecond());
+    }
+
     int extendLease(UUID id, UUID leaseId, Instant now, Instant leaseExpiresAt) {
         return jdbc.update("""
                 UPDATE media_jobs SET lease_expires = ?

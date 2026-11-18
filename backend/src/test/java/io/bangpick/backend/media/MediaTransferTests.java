@@ -2,6 +2,7 @@ package io.bangpick.backend.media;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -36,12 +37,13 @@ import tools.jackson.databind.ObjectMapper;
 class MediaTransferTests {
     private static final String OWNER = "example-development-token-for-tests-123";
     private static final String WORKER = "example-worker-token-for-tests-456";
+    private static final String RECOVERY = "example-recovery-token-for-tests-789";
 
     @Configuration(proxyBeanMethods = false)
     @EnableAutoConfiguration
     @Import(MediaController.class)
     static class TestApplication {
-        @Bean MediaAccess access() { return new MediaAccess(OWNER, WORKER); }
+        @Bean MediaAccess access() { return new MediaAccess(OWNER, WORKER, RECOVERY); }
         @Bean FakeStorage storage() { return new FakeStorage(); }
         @Bean MediaJobRepository repository(JdbcTemplate jdbc) { return new MediaJobRepository(jdbc); }
         @Bean MediaJobs jobs(MediaJobRepository repository, MediaStorage storage) { return new MediaJobs(repository, storage); }
@@ -83,6 +85,16 @@ class MediaTransferTests {
     @Autowired MediaJobs jobs;
     private final ObjectMapper json = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
+
+    @Test
+    void recoveryTokenCanBeDisabledButCannotReuseAnotherRole() {
+        var disabled = new MediaAccess(OWNER, WORKER, null);
+        var denied = org.junit.jupiter.api.Assertions.assertThrows(ResponseStatusException.class,
+                () -> disabled.requireRecovery("Bearer " + RECOVERY));
+        assertThat(denied.getStatusCode()).isEqualTo(UNAUTHORIZED);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> new MediaAccess(OWNER, WORKER, WORKER));
+    }
 
     @Test
     void ownerAndWorkerUseSeparateCredentialsAndScopedTransfers() throws Exception {
@@ -193,6 +205,90 @@ class MediaTransferTests {
         assertThat(jdbc.queryForObject("SELECT result_key FROM media_jobs WHERE id = ?", String.class, id))
                 .isEqualTo(storage.permissions(previousResultUrl).key());
         send(409, ownerPath + "/preview", OWNER, Map.of());
+    }
+
+    @Test
+    void confirmedExpiredExecutionCanBeRecoveredWithoutReusingItsResult() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        String lease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        String resultUrl = url(body(send(200, workerPath + "/result-upload", WORKER,
+                Map.of("leaseId", lease, "sizeBytes", 80))));
+        storage.put(resultUrl, 80);
+        var confirmation = Map.of("leaseId", lease, "previousExecutionStopped", true, "retryable", true);
+
+        send(401, workerPath + "/recover-expired", WORKER, confirmation);
+        send(401, workerPath + "/recover-expired", OWNER, confirmation);
+        send(400, workerPath + "/recover-expired", RECOVERY,
+                Map.of("leaseId", lease, "previousExecutionStopped", false, "retryable", true));
+        send(400, workerPath + "/recover-expired", RECOVERY,
+                Map.of("leaseId", lease, "retryable", true));
+        send(409, workerPath + "/recover-expired", RECOVERY, confirmation);
+        assertThat(storage.permissions(resultUrl)).isNotNull();
+
+        jdbc.update("UPDATE media_jobs SET lease_expires = 0 WHERE id = ?", id);
+        send(409, workerPath + "/recover-expired", RECOVERY,
+                Map.of("leaseId", UUID.randomUUID().toString(), "previousExecutionStopped", true, "retryable", true));
+        long beforeRecovery = Instant.now().getEpochSecond();
+        assertThat(body(send(200, workerPath + "/recover-expired", RECOVERY, confirmation))
+                .path("status").asText()).isEqualTo("QUEUED");
+        Long availableAt = jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id);
+        assertThat(availableAt).isBetween(beforeRecovery + 30, beforeRecovery + 32);
+        assertThat(storage.permissions(resultUrl)).isNull();
+        assertThat(jdbc.queryForObject("SELECT result_key FROM media_jobs WHERE id = ?", String.class, id)).isNull();
+        assertThat(jdbc.queryForObject("SELECT lease_id FROM media_jobs WHERE id = ?", String.class, id)).isNull();
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("LEASE_EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(1);
+        assertThat(body(send(200, workerPath + "/recover-expired", RECOVERY, confirmation))
+                .path("status").asText()).isEqualTo("QUEUED");
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id))
+                .isEqualTo(availableAt);
+        send(409, workerPath + "/claim", WORKER, Map.of());
+        send(409, workerPath + "/result-complete", WORKER, Map.of("leaseId", lease));
+
+        jdbc.update("UPDATE media_jobs SET available_at = 0 WHERE id = ?", id);
+        String newLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        assertThat(newLease).isNotEqualTo(lease);
+        send(409, workerPath + "/recover-expired", RECOVERY, confirmation);
+    }
+
+    @Test
+    void confirmedExpiredExecutionStopsAtAttemptLimit() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            String lease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+            jdbc.update("UPDATE media_jobs SET lease_expires = 0 WHERE id = ?", id);
+            String expected = attempt < 3 ? "QUEUED" : "FAILED";
+            assertThat(body(send(200, workerPath + "/recover-expired", RECOVERY,
+                    Map.of("leaseId", lease, "previousExecutionStopped", true, "retryable", true)))
+                    .path("status").asText()).isEqualTo(expected);
+            if (attempt < 3) {
+                jdbc.update("UPDATE media_jobs SET available_at = 0 WHERE id = ?", id);
+            }
+        }
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id)).isNull();
+        send(409, workerPath + "/claim", WORKER, Map.of());
+    }
+
+    @Test
+    void operatorCanFinishAnExpiredAttemptWithoutRetry() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        String lease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        jdbc.update("UPDATE media_jobs SET lease_expires = 0 WHERE id = ?", id);
+        send(400, workerPath + "/recover-expired", RECOVERY,
+                Map.of("leaseId", lease, "previousExecutionStopped", true));
+        assertThat(body(send(200, workerPath + "/recover-expired", RECOVERY,
+                Map.of("leaseId", lease, "previousExecutionStopped", true, "retryable", false)))
+                .path("status").asText()).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id)).isNull();
+        assertThat(body(send(200, "/media/jobs/" + id, OWNER, null)).path("status").asText())
+                .isEqualTo("FAILED");
     }
 
     @Test

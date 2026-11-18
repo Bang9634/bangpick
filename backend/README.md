@@ -20,6 +20,7 @@ Java 21과 Maven Wrapper로 실행합니다. Windows에서는 `mvnw.cmd`를 사�
 | `BANGPICK_MEDIA_ENABLED` | `true` — 기본값은 `false` |
 | `BANGPICK_MEDIA_DEV_TOKEN` | 브라우저에서 입력하는 개발 토큰. `openssl rand -hex 32`로 생성 |
 | `BANGPICK_MEDIA_WORKER_TOKEN` | Worker용 토큰. 위와 별도로 한 번 더 생성 |
+| `BANGPICK_MEDIA_RECOVERY_TOKEN` | 선택 사항. 이전 실행 중단을 확인한 운영자의 만료 작업 복구 전용 토큰. 다른 두 토큰과 별도로 생성 |
 | `OCI_CONFIG_FILE` | OCI SDK 설정 파일의 절대 경로 |
 | `OCI_CONFIG_PROFILE` | 개발용 OCI 프로필 이름, 예: `BANGPICK_DEV` |
 | `OCI_REGION` | 개발 버킷의 리전 ID |
@@ -39,3 +40,9 @@ cd backend
 기능이 켜지면 Flyway가 `media_jobs` 테이블을 생성합니다. 위 실행 예시는 백엔드를 루프백에 바인딩합니다. 다른 환경에서 실제 팀 Worker가 연결할 때는 HTTPS 또는 보호된 터널을 사용합니다. 개발 토큰은 단일 개발 소유자 식별용이므로 이 기능을 현재 상태로 인터넷에 공개하지 않습니다.
 
 브라우저는 [프론트 실행 안내](../frontend/README.md), 파일 다운로드·결과 업로드는 [Worker 실행 안내](../gpu-worker/README.md), API는 [서비스 간 계약](../contracts/README.md)을 참고하세요.
+
+## 만료 작업 수동 복구
+
+`PROCESSING` 작업의 점유가 만료돼도 GPU 계산이 멈췄다는 뜻은 아닙니다. 운영자는 GPU 호스트에서 이전 실행이 종료됐거나 취소됐음을 확인한 뒤, 해당 작업의 기존 점유 ID로 `recover-expired`를 호출합니다. 점유 ID는 Worker 작업 폴더의 `lease` 파일 또는 운영자가 접근하는 DB에서 확인합니다. 실행 여부가 불명확하면 호출하지 않고 작업을 `PROCESSING`에 둡니다.
+
+이 API는 별도의 `BANGPICK_MEDIA_RECOVERY_TOKEN`이 설정된 경우에만 허용합니다. Worker 토큰으로는 호출할 수 없습니다. 요청에는 `leaseId`, `previousExecutionStopped: true`, `retryable`을 넣습니다. `retryable: true`는 남은 시도가 있을 때 대기열로 돌리고, `false`는 `FAILED`로 마칩니다. [요청 계약과 제한](../contracts/README.md#영상ply-전송)을 확인하세요. 이 확인값은 운영자의 선언이며 백엔드가 GPU 프로세스 종료를 직접 검증하지는 않습니다.

@@ -32,6 +32,9 @@ class MediaController {
     record FailureRequest(UUID leaseId, Boolean retryable) {
         @Override public String toString() { return "FailureRequest[retryable=" + retryable + "]"; }
     }
+    record RecoveryRequest(UUID leaseId, Boolean previousExecutionStopped, Boolean retryable) {
+        @Override public String toString() { return "RecoveryRequest[redacted]"; }
+    }
 
     @PostMapping("/media/jobs")
     ResponseEntity<MediaJobs.Upload> start(@RequestHeader(value = "Authorization", required = false) String token,
@@ -83,6 +86,14 @@ class MediaController {
                                                        @PathVariable UUID jobId, @RequestBody FailureRequest request) {
         access.requireWorker(token);
         return noStore(jobs.failProcessing(jobId, request.leaseId(), request.retryable()));
+    }
+
+    @PostMapping("/internal/media/jobs/{jobId}/recover-expired")
+    ResponseEntity<MediaJobs.JobView> recoverExpired(@RequestHeader(value = "Authorization", required = false) String token,
+                                                     @PathVariable UUID jobId, @RequestBody RecoveryRequest request) {
+        access.requireRecovery(token);
+        return noStore(jobs.recoverExpired(jobId, request.leaseId(),
+                request.previousExecutionStopped(), request.retryable()));
     }
 
     @PostMapping("/internal/media/jobs/{jobId}/heartbeat")

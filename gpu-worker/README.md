@@ -30,7 +30,7 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 
 `lease` 파일에는 마지막으로 받은 점유 ID가 남습니다. 실패 보고 후에는 그 ID가 더 이상 유효하지 않으며, 작업을 다시 점유하면 새 ID로 덮어씁니다.
 
-만료된 `PROCESSING` 작업은 `download <job-id>`로도 새 점유를 받을 수 없습니다. 이전 실행의 종료를 확인하고 복구하는 경로는 아직 구현되지 않았습니다.
+만료된 `PROCESSING` 작업은 `download <job-id>`로도 새 점유를 받을 수 없습니다. 이전 실행의 종료를 확인한 운영자가 [백엔드의 수동 복구 절차](../backend/README.md#만료-작업-수동-복구)를 수행해야 합니다. Worker 토큰으로 복구 API를 호출할 수 없습니다.
 
 `heartbeat`는 저장된 점유 ID로 백엔드에 한 번 갱신을 요청하고 새 만료 시각을 출력합니다. 이미 만료된 점유는 갱신할 수 없습니다.
 
