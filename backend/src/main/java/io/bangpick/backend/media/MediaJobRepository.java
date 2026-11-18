@@ -30,6 +30,17 @@ final class MediaJobRepository {
         return queryJob(SELECT_BY_ID + "FOR UPDATE", id);
     }
 
+    // 호출자의 트랜잭션 안에서 선택한 행을 잠가 다른 Worker의 중복 점유를 막는다.
+    Optional<UUID> findNextQueuedForUpdate(Instant now) {
+        return jdbc.query("""
+                SELECT id FROM media_jobs
+                WHERE status = ? AND available_at <= ?
+                ORDER BY queued_at, id
+                LIMIT 1 FOR UPDATE SKIP LOCKED
+                """, (rs, rowNumber) -> UUID.fromString(rs.getString("id")),
+                Status.QUEUED.name(), now.getEpochSecond()).stream().findFirst();
+    }
+
     void insertUpload(UUID id, String ownerId, String videoType, long videoBytes,
                       String inputGrantId, Instant uploadExpiresAt) {
         jdbc.update("""
@@ -53,6 +64,7 @@ final class MediaJobRepository {
     void assignLease(UUID id, UUID leaseId, Instant leaseExpiresAt) {
         jdbc.update("""
                 UPDATE media_jobs SET status = ?, lease_id = ?, lease_expires = ?,
+                    attempt_count = attempt_count + 1,
                     result_par_id = NULL, result_key = NULL, result_bytes = NULL WHERE id = ?
                 """, Status.PROCESSING.name(), leaseId.toString(), leaseExpiresAt.getEpochSecond(), id.toString());
     }

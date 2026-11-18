@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -31,6 +32,9 @@ class MediaJobs {
     record Upload(UUID jobId, Transfer transfer) {}
     record Claim(UUID leaseId, Instant leaseExpiresAt, String extension, Transfer transfer) {
         @Override public String toString() { return "Claim[leaseExpiresAt=" + leaseExpiresAt + "]"; }
+    }
+    record NextClaim(UUID jobId, UUID leaseId, Instant leaseExpiresAt) {
+        @Override public String toString() { return "NextClaim[jobId=" + jobId + ", leaseExpiresAt=" + leaseExpiresAt + "]"; }
     }
     record JobView(UUID jobId, Status status) {}
 
@@ -77,6 +81,17 @@ class MediaJobs {
         if (job.status() != Status.RESULT_READY) throw conflict("The PLY result is not ready");
         // RESULT_READY는 저장 확인 상태다. 이 링크는 소유자 전용 미리보기에 쓴다.
         return grant(job.resultKey(), READ, Instant.now().plus(READ_GRANT_DURATION), job.resultBytes());
+    }
+
+    @Transactional
+    public Optional<NextClaim> claimNext() {
+        Instant now = Instant.now();
+        return repository.findNextQueuedForUpdate(now).map(id -> {
+            UUID lease = UUID.randomUUID();
+            Instant leaseExpires = now.plus(LEASE_DURATION);
+            repository.assignLease(id, lease, leaseExpires);
+            return new NextClaim(id, lease, leaseExpires);
+        });
     }
 
     @Transactional

@@ -8,9 +8,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -176,6 +179,74 @@ class MediaTransferTests {
         send(409, workerPath + "/result-complete", WORKER, Map.of("leaseId", previousLease));
         send(409, workerPath + "/result-complete", WORKER, Map.of("leaseId", newLease));
         send(409, ownerPath + "/preview", OWNER, Map.of());
+    }
+
+    @Test
+    void claimNextSelectsOldestAvailableJobAndCountsNewLeases() throws Exception {
+        String delayed = queueVideo();
+        String oldestReady = queueVideo();
+        String newerReady = queueVideo();
+        jdbc.update("UPDATE media_jobs SET queued_at = ?, available_at = ? WHERE id = ?", 50L,
+                Instant.now().plusSeconds(3600).getEpochSecond(), delayed);
+        jdbc.update("UPDATE media_jobs SET queued_at = ?, available_at = ? WHERE id = ?", 100L, 100L, oldestReady);
+        jdbc.update("UPDATE media_jobs SET queued_at = ?, available_at = ? WHERE id = ?", 200L, 200L, newerReady);
+
+        send(401, "/internal/media/jobs/claim-next", OWNER, Map.of());
+        var first = body(send(200, "/internal/media/jobs/claim-next", WORKER, Map.of()));
+        assertThat(first.path("jobId").asText()).isEqualTo(oldestReady);
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, oldestReady))
+                .isEqualTo(1);
+        var resumed = body(send(200, "/internal/media/jobs/" + oldestReady + "/claim", WORKER,
+                Map.of("leaseId", first.path("leaseId").asText())));
+        assertThat(resumed.path("leaseId").asText()).isEqualTo(first.path("leaseId").asText());
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, oldestReady))
+                .isEqualTo(1);
+
+        var second = body(send(200, "/internal/media/jobs/claim-next", WORKER, Map.of()));
+        assertThat(second.path("jobId").asText()).isEqualTo(newerReady);
+        send(204, "/internal/media/jobs/claim-next", WORKER, Map.of());
+        jdbc.update("UPDATE media_jobs SET available_at = 0 WHERE id = ?", delayed);
+        assertThat(body(send(200, "/internal/media/jobs/claim-next", WORKER, Map.of())).path("jobId").asText())
+                .isEqualTo(delayed);
+    }
+
+    @Test
+    void concurrentClaimNextRequestsDoNotReturnTheSameJob() throws Exception {
+        String jobId = queueVideo();
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> {
+                start.await();
+                return requestClaimNext();
+            });
+            var second = executor.submit(() -> {
+                start.await();
+                return requestClaimNext();
+            });
+            start.countDown();
+            var firstResponse = first.get();
+            var secondResponse = second.get();
+            assertThat(List.of(firstResponse.statusCode(), secondResponse.statusCode()))
+                    .containsExactlyInAnyOrder(200, 204);
+            var claimed = firstResponse.statusCode() == 200 ? firstResponse : secondResponse;
+            assertThat(body(claimed).path("jobId").asText()).isEqualTo(jobId);
+        }
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, jobId))
+                .isEqualTo(1);
+    }
+
+    private String queueVideo() throws Exception {
+        var started = body(send(200, "/media/jobs", OWNER, Map.of("sizeBytes", 30, "contentType", "video/mp4")));
+        String id = started.path("jobId").asText();
+        storage.put(url(started.path("transfer")), 30);
+        send(200, "/media/jobs/" + id + "/input-complete", OWNER, Map.of());
+        return id;
+    }
+
+    private HttpResponse<String> requestClaimNext() throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/internal/media/jobs/claim-next"))
+                .header("Authorization", "Bearer " + WORKER)
+                .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> send(int status, String path, String token, Object data) throws Exception {

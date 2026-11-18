@@ -61,6 +61,13 @@ class MediaController {
         return noStore(jobs.claim(jobId, request.leaseId()));
     }
 
+    @PostMapping("/internal/media/jobs/claim-next")
+    ResponseEntity<MediaJobs.NextClaim> claimNext(@RequestHeader(value = "Authorization", required = false) String token) {
+        access.requireWorker(token);
+        return jobs.claimNext().map(MediaController::noStore)
+                .orElseGet(() -> ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build());
+    }
+
     @PostMapping("/internal/media/jobs/{jobId}/result-upload")
     ResponseEntity<MediaJobs.Transfer> resultUpload(@RequestHeader(value = "Authorization", required = false) String token,
                                                      @PathVariable UUID jobId, @RequestBody ResultRequest request) {

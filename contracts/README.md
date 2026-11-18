@@ -16,6 +16,7 @@ API 호출 순서와 파일이 이동하는 방향은 [OCI 전송 흐름도](../
 | 브라우저 | `POST /api/media/jobs/{jobId}/input-complete` | 본문 없음 | `{jobId, status}` |
 | 브라우저 | `GET /api/media/jobs/{jobId}` | 본문 없음 | `{jobId, status}` |
 | 브라우저 | `POST /api/media/jobs/{jobId}/preview` | 본문 없음 | `transfer` |
+| Worker | `POST /api/internal/media/jobs/claim-next` | 본문 없음 | `{jobId, leaseId, leaseExpiresAt}` 또는 대기 작업이 없으면 `204 No Content` |
 | Worker | `POST /api/internal/media/jobs/{jobId}/claim` | `{leaseId: null}` 또는 기존 `leaseId` | `{leaseId, leaseExpiresAt, extension, transfer}` |
 | Worker | `POST /api/internal/media/jobs/{jobId}/result-upload` | `{leaseId, sizeBytes}` | `transfer` |
 | Worker | `POST /api/internal/media/jobs/{jobId}/result-complete` | `{leaseId}` | `{jobId, status}` |
@@ -25,5 +26,7 @@ API 호출 순서와 파일이 이동하는 방향은 [OCI 전송 흐름도](../
 원본은 MP4, MOV, WebM·최대 512 MiB, 결과는 PLY·최대 256 MiB입니다. 백엔드는 URL 발급 시 요청 크기를 검증하고, 완료 보고 시 저장 객체의 크기와 비교합니다. PAR 자체는 파일 크기를 강제하지 않습니다. 백엔드의 확인 범위는 객체 메타데이터이며, 영상 디코딩이나 파일 내용 검사는 포함하지 않습니다.
 
 - 상태: `UPLOADING → QUEUED → PROCESSING → RESULT_READY`. `RESULT_READY`는 **파일 저장 확인**을 뜻하며, 소유자에게만 미리보기를 허용합니다. 검수 승인이나 공개를 의미하지 않습니다.
+- 자동 점유는 실행 가능한 `QUEUED` 작업을 `queued_at`, 작업 ID 순으로 선택하고 한 트랜잭션에서 `PROCESSING`으로 바꿉니다. `available_at`이 미래인 작업과 다른 Worker가 잠근 행은 점유하지 않습니다. 선택 후 받은 `leaseId`로 지정 작업의 `/claim`을 호출하면 원본 읽기 URL을 받습니다. 작업 ID를 지정하고 `leaseId: null`을 보내는 기존 수동 점유도 유지되며, 이 경로에는 대기 순서가 적용되지 않습니다.
+- 새 점유마다 `attempt_count`가 증가합니다. 대기 시각은 초 단위이므로 같은 초에 대기 상태가 된 작업은 작업 ID 순으로 처리합니다. 이 API만으로 GPU 전체의 동시 실행 수가 제한되거나 만료 작업이 자동 복구되지는 않습니다. V2 이전 대기 작업의 `queued_at = 0`은 실제 접수 시각이 아니라 시각 미상 표시값입니다.
 - URL은 읽기 5분, 쓰기 최대 15분입니다. Worker 점유는 6시간이며 활성 점유 ID를 보관해야 합니다. 점유 만료 후 다른 실행이 작업을 다시 받을 수 있습니다. 결과 URL을 재발급하면 새 저장 키를 사용합니다.
 - 상태 코드는 요청 형식 오류 `400`, 인증 실패 `401`, 없거나 소유자가 아닌 작업 `404`, 미완료·권한 없는 점유·크기 불일치 등 상태 충돌 `409`, 스토리지 오류 `502`입니다. 완료 요청은 동일 작업/점유에서 다시 호출할 수 있습니다. 잘못된 원본을 다시 올리려면 새 작업을 생성합니다.

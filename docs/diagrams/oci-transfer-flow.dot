@@ -64,7 +64,7 @@ digraph OciTransferFlow {
 
   phase2 [pos="1.53,8.9!", label=<<B>02  Worker의 입력·결과 전송</B>>];
   state2 [pos="8.6,8.9!", label="MySQL  ·  PROCESSING → RESULT_READY", fontcolor="#475569", fontsize=12];
-  msg7 [pos="6.9,8.54!", label="작업 점유 요청"];
+  msg7 [pos="6.9,8.54!", label="작업 ID 지정 점유 요청"];
   msg8 [pos="5.5,8.13!", label="원본 읽기 URL 발급 요청"];
   msg9 [pos="6.9,7.72!", label="점유 ID와 읽기 URL 반환"];
   msg10 [pos="8.3,7.31!", label=<<B>GET  원본 영상</B>>, fontcolor="#047857"];
