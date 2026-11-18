@@ -1,6 +1,6 @@
 # GPU Worker
 
-Worker는 작업 하나의 원본 영상과 결과 PLY를 전송하는 CLI입니다. 대기 중인 작업을 하나 골라 점유하거나 작업 ID를 직접 지정할 수 있습니다. 명령 실행에 GPU는 필요하지 않습니다.
+Worker는 작업 하나의 원본 영상과 결과 PLY를 전송하고, 로컬 처리 명령을 실행하는 동안 점유를 갱신하는 CLI입니다. 대기 중인 작업을 하나 골라 점유하거나 작업 ID를 직접 지정할 수 있습니다. 전송 및 감시 기능 자체에는 GPU가 필요하지 않습니다.
 
 Python 3.11 이상에서 `pyproject.toml`이 있는 디렉토리에서 환경을 준비합니다.
 
@@ -19,6 +19,7 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 .venv/bin/bangpick-worker download-next --work-dir ../outputs/worker
 .venv/bin/bangpick-worker download <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker heartbeat <job-id> --work-dir ../outputs/worker
+.venv/bin/bangpick-worker run-process <job-id> --work-dir ../outputs/worker -- python /path/to/processor.py
 .venv/bin/bangpick-worker upload <job-id> ./room.ply --work-dir ../outputs/worker
 ```
 
@@ -28,7 +29,11 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 
 `lease` 파일에는 마지막으로 받은 점유 ID가 남습니다. 실패 보고 후에는 그 ID가 더 이상 유효하지 않으며, 작업을 다시 점유하면 새 ID로 덮어씁니다.
 
-`heartbeat`는 저장된 점유 ID로 백엔드에 한 번 갱신을 요청하고 새 만료 시각을 출력합니다. 이미 만료된 점유는 갱신할 수 없습니다. 현재 CLI에는 주기적인 자동 호출이나 학습 프로세스 감시가 없으므로, 이 명령만으로 장시간 작업의 점유 유지가 자동화되지는 않습니다.
+`heartbeat`는 저장된 점유 ID로 백엔드에 한 번 갱신을 요청하고 새 만료 시각을 출력합니다. 이미 만료된 점유는 갱신할 수 없습니다.
+
+`run-process`는 이미 다운로드해 점유한 작업에 대해 `--` 뒤의 **신뢰할 수 있는 로컬 명령**을 작업 폴더에서 실행합니다. 실행 직전에 heartbeat를 보내고, 명령이 살아 있는 동안 60초마다 다시 보냅니다. 명령에는 Worker API 토큰을 환경 변수로 전달하지 않습니다. 같은 호스트에서 같은 `--work-dir`를 사용하는 `run-process` 명령은 파일 잠금으로 한 번에 하나만 실행합니다. 처리 명령이 끝나면 감시도 끝나므로 이후 PLY 업로드와 완료 보고는 별도로 실행해야 합니다. 현재 저장소에는 실제 영상 전처리·3DGS 학습 명령이 연결되어 있지 않습니다.
+
+명령이 0이 아닌 코드로 끝나거나 heartbeat가 실패하면 `run-process`도 오류로 종료합니다. heartbeat 실패나 중단 시 직접 실행한 자식 프로세스에 종료를 요청합니다. 그 프로세스가 따로 만든 하위 프로세스의 종료까지 보장하지 않습니다. 이때 백엔드 작업은 즉시 실패 처리되지 않고 `PROCESSING`에 남습니다. 이 로컬 잠금은 다른 작업 디렉터리나 GPU 호스트에서의 중복 실행을 막지 않으며, 백엔드의 전체 GPU 동시 실행 수를 제한하지 않습니다.
 
 작업 폴더·실제 모델·개발용 토큰을 커밋하지 않습니다. 이미 PLY 업로드가 끝났는데 완료 응답만 실패했다면 `complete <job-id> --work-dir ../outputs/worker`를 실행합니다. PLY 업로드가 실패했다면 `upload`를 재실행해 새 URL을 받습니다.
 

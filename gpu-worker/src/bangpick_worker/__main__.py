@@ -1,7 +1,6 @@
-"""One-shot transfer commands; the reconstruction process is run separately."""
+"""Transfer one job or supervise a local processing command with heartbeats."""
 
 import argparse
-from datetime import datetime
 import os
 from pathlib import Path
 import sys
@@ -9,6 +8,7 @@ from tempfile import NamedTemporaryFile
 from uuid import UUID
 
 from .transfers import PermanentTransferError, TransferError, Transfers
+from .supervisor import renew_lease, supervise
 
 
 def save_lease(path: Path, lease: str) -> None:
@@ -77,17 +77,14 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
     if not lease:
         raise TransferError("Run download for this job first")
     if args.action == "heartbeat":
-        renewed = transfers.command(job_id, "heartbeat", {"leaseId": lease})
-        expires_at = renewed.get("leaseExpiresAt")
-        if not isinstance(expires_at, str):
-            raise TransferError("Backend returned an invalid lease expiry")
-        try:
-            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-        except ValueError:
-            raise TransferError("Backend returned an invalid lease expiry") from None
-        if parsed_expiry.tzinfo is None:
-            raise TransferError("Backend returned an invalid lease expiry")
+        expires_at = renew_lease(transfers, job_id, lease)
         print(f"Lease for job {job_id} is valid until {expires_at}")
+        return
+    if args.action == "run-process":
+        result = supervise(job_id, lease, args.work_dir, args.processor, transfers)
+        if result != 0:
+            raise TransferError(f"Processing command exited with code {result}; the job remains PROCESSING")
+        print(f"Processing command finished for job {job_id}; upload the result separately")
         return
     if args.action == "upload":
         with args.ply.open("rb") as file:
@@ -111,6 +108,7 @@ def main() -> None:
         "download-next": "Claim the next queued job and download its source video",
         "download": "Claim the job and download its source video",
         "heartbeat": "Renew the current lease for a job once",
+        "run-process": "Run one local command with automatic heartbeats",
         "upload": "Upload a local PLY and report completion",
         "complete": "Retry the completion report after an upload succeeded",
     }.items():
@@ -120,7 +118,19 @@ def main() -> None:
         command.add_argument("--work-dir", required=True, type=Path)
         if action == "upload":
             command.add_argument("ply", type=Path)
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    if argv[:1] == ["run-process"]:
+        if "--" not in argv:
+            if "-h" in argv or "--help" in argv:
+                parser.parse_args(argv)
+            parser.error("run-process requires -- before the processing command")
+        separator = argv.index("--")
+        args = parser.parse_args(argv[:separator])
+        args.processor = argv[separator + 1:]
+        if not args.processor:
+            parser.error("run-process requires a processing command after --")
+    else:
+        args = parser.parse_args(argv)
     try:
         run(args, Transfers(os.getenv("BANGPICK_API_URL", ""), os.getenv("BANGPICK_MEDIA_WORKER_TOKEN", "")))
     except TransferError as error:
@@ -129,6 +139,8 @@ def main() -> None:
         parser.exit(1, "Invalid local lease or backend response\n")
     except (OSError, EOFError):
         parser.exit(1, "File access or transfer failed; check the work directory and connection\n")
+    except KeyboardInterrupt:
+        parser.exit(130, "Processing interrupted\n")
 
 
 if __name__ == "__main__":

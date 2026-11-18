@@ -2,6 +2,7 @@ from argparse import Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from bangpick_worker.__main__ import run
@@ -124,6 +125,36 @@ class HeartbeatTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(TransferError, "Run download"):
                 run(Namespace(action="heartbeat", job_id=uuid4(), work_dir=Path(temporary)), object())
+
+
+class RunProcessTests(unittest.TestCase):
+    def test_run_process_uses_saved_lease_and_passes_command(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            (job_dir / "lease").write_text(str(lease_id), encoding="ascii")
+            command = ["python", "processor.py"]
+            with patch("bangpick_worker.__main__.supervise", return_value=0) as supervisor:
+                run(Namespace(action="run-process", job_id=job_id, work_dir=work_dir,
+                              processor=command), object())
+            supervisor.assert_called_once_with(str(job_id), str(lease_id), work_dir,
+                                               command, unittest.mock.ANY)
+
+    def test_run_process_reports_nonzero_exit_without_completing_job(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            (job_dir / "lease").write_text(str(lease_id), encoding="ascii")
+            with patch("bangpick_worker.__main__.supervise", return_value=2):
+                with self.assertRaisesRegex(TransferError, "remains PROCESSING"):
+                    run(Namespace(action="run-process", job_id=job_id, work_dir=work_dir,
+                                  processor=["python"]), object())
 
 
 if __name__ == "__main__":
