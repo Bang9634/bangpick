@@ -1,6 +1,7 @@
 """One-shot transfer commands; the reconstruction process is run separately."""
 
 import argparse
+from datetime import datetime
 import os
 from pathlib import Path
 import sys
@@ -75,6 +76,19 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
         return
     if not lease:
         raise TransferError("Run download for this job first")
+    if args.action == "heartbeat":
+        renewed = transfers.command(job_id, "heartbeat", {"leaseId": lease})
+        expires_at = renewed.get("leaseExpiresAt")
+        if not isinstance(expires_at, str):
+            raise TransferError("Backend returned an invalid lease expiry")
+        try:
+            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise TransferError("Backend returned an invalid lease expiry") from None
+        if parsed_expiry.tzinfo is None:
+            raise TransferError("Backend returned an invalid lease expiry")
+        print(f"Lease for job {job_id} is valid until {expires_at}")
+        return
     if args.action == "upload":
         with args.ply.open("rb") as file:
             if args.ply.suffix.lower() != ".ply" or file.readline(8).strip() != b"ply":
@@ -96,6 +110,7 @@ def main() -> None:
     for action, help_text in {
         "download-next": "Claim the next queued job and download its source video",
         "download": "Claim the job and download its source video",
+        "heartbeat": "Renew the current lease for a job once",
         "upload": "Upload a local PLY and report completion",
         "complete": "Retry the completion report after an upload succeeded",
     }.items():

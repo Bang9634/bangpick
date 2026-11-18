@@ -81,6 +81,14 @@ final class MediaJobRepository {
                 "INPUT_DOWNLOAD_FAILED", leaseId.toString(), id.toString(), Status.PROCESSING.name(), leaseId.toString());
     }
 
+    int extendLease(UUID id, UUID leaseId, Instant now, Instant leaseExpiresAt) {
+        return jdbc.update("""
+                UPDATE media_jobs SET lease_expires = ?
+                WHERE id = ? AND status = ? AND lease_id = ? AND lease_expires > ?
+                """, leaseExpiresAt.getEpochSecond(), id.toString(), Status.PROCESSING.name(),
+                leaseId.toString(), now.getEpochSecond());
+    }
+
     void recordResultUpload(UUID id, String resultGrantId, String resultKey, long resultBytes) {
         jdbc.update("UPDATE media_jobs SET result_par_id = ?, result_key = ?, result_bytes = ? WHERE id = ?",
                 resultGrantId, resultKey, resultBytes, id.toString());

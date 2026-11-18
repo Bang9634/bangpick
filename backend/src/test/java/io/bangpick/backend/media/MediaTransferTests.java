@@ -136,6 +136,7 @@ class MediaTransferTests {
         storage.put(resultUrl, 80);
         send(200, workerPath + "/result-complete", WORKER, Map.of("leaseId", lease));
         send(200, workerPath + "/result-complete", WORKER, Map.of("leaseId", lease));
+        send(409, workerPath + "/heartbeat", WORKER, Map.of("leaseId", lease));
 
         assertThat(storage.permissions(resultUrl)).isNull();
         assertThat(body(send(200, ownerPath, OWNER, null)).path("status").asText()).isEqualTo("RESULT_READY");
@@ -291,6 +292,39 @@ class MediaTransferTests {
                 .isEqualTo(1);
         send(409, workerPath + "/result-upload", WORKER,
                 Map.of("leaseId", lease, "sizeBytes", 80));
+        send(409, workerPath + "/heartbeat", WORKER, Map.of("leaseId", lease));
+    }
+
+    @Test
+    void heartbeatExtendsOnlyTheCurrentActiveLease() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        send(401, workerPath + "/heartbeat", OWNER, Map.of());
+        send(409, workerPath + "/heartbeat", WORKER, Map.of());
+        String lease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        send(409, workerPath + "/heartbeat", WORKER,
+                Map.of("leaseId", UUID.randomUUID().toString()));
+
+        long oldExpiry = Instant.now().plusSeconds(5).getEpochSecond();
+        jdbc.update("UPDATE media_jobs SET lease_expires = ? WHERE id = ?", oldExpiry, id);
+        var renewed = body(send(200, workerPath + "/heartbeat", WORKER, Map.of("leaseId", lease)));
+        long renewedExpiry = Instant.parse(renewed.path("leaseExpiresAt").asText()).getEpochSecond();
+        assertThat(renewedExpiry).isGreaterThan(oldExpiry);
+        assertThat(jdbc.queryForObject("SELECT lease_expires FROM media_jobs WHERE id = ?", Long.class, id))
+                .isEqualTo(renewedExpiry);
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(1);
+        assertThat(renewed.has("leaseId")).isFalse();
+
+        long laterExpiry = Instant.now().plusSeconds(7 * 3600).getEpochSecond();
+        jdbc.update("UPDATE media_jobs SET lease_expires = ? WHERE id = ?", laterExpiry, id);
+        var repeated = body(send(200, workerPath + "/heartbeat", WORKER, Map.of("leaseId", lease)));
+        assertThat(Instant.parse(repeated.path("leaseExpiresAt").asText()).getEpochSecond()).isEqualTo(laterExpiry);
+
+        jdbc.update("UPDATE media_jobs SET lease_expires = 0 WHERE id = ?", id);
+        send(409, workerPath + "/heartbeat", WORKER, Map.of("leaseId", lease));
+        assertThat(jdbc.queryForObject("SELECT lease_expires FROM media_jobs WHERE id = ?", Long.class, id))
+                .isZero();
     }
 
     private String queueVideo() throws Exception {

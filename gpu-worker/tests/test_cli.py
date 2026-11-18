@@ -98,5 +98,33 @@ class DownloadNextTests(unittest.TestCase):
                                  (str(job_id), {"leaseId": str(lease_id), "retryable": retryable}))
 
 
+class HeartbeatTests(unittest.TestCase):
+    def test_heartbeat_uses_saved_lease(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+
+        class HeartbeatBackend:
+            def __init__(self):
+                self.request = None
+
+            def command(self, actual_job_id, action, payload):
+                self.request = (actual_job_id, action, payload)
+                return {"leaseExpiresAt": "2026-11-19T12:00:00Z"}
+
+        backend = HeartbeatBackend()
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            (job_dir / "lease").write_text(str(lease_id), encoding="ascii")
+            run(Namespace(action="heartbeat", job_id=job_id, work_dir=work_dir), backend)
+        self.assertEqual(backend.request, (str(job_id), "heartbeat", {"leaseId": str(lease_id)}))
+
+    def test_heartbeat_requires_a_saved_lease(self):
+        with TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(TransferError, "Run download"):
+                run(Namespace(action="heartbeat", job_id=uuid4(), work_dir=Path(temporary)), object())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,7 @@ class MediaJobs {
     record NextClaim(UUID jobId, UUID leaseId, Instant leaseExpiresAt) {
         @Override public String toString() { return "NextClaim[jobId=" + jobId + ", leaseExpiresAt=" + leaseExpiresAt + "]"; }
     }
+    record LeaseHeartbeat(Instant leaseExpiresAt) {}
     record JobView(UUID jobId, Status status) {}
 
     private final MediaJobRepository repository;
@@ -90,7 +91,7 @@ class MediaJobs {
         Instant now = Instant.now();
         return repository.findNextQueuedForUpdate(now, MAX_ATTEMPTS).map(id -> {
             UUID lease = UUID.randomUUID();
-            Instant leaseExpires = now.plus(LEASE_DURATION);
+            Instant leaseExpires = now.plus(LEASE_DURATION).truncatedTo(ChronoUnit.SECONDS);
             repository.assignLease(id, lease, leaseExpires);
             return new NextClaim(id, lease, leaseExpires);
         });
@@ -115,10 +116,24 @@ class MediaJobs {
         }
         storage.revoke(job.resultGrantId());
         UUID lease = UUID.randomUUID();
-        Instant leaseExpires = now.plus(LEASE_DURATION);
+        Instant leaseExpires = now.plus(LEASE_DURATION).truncatedTo(ChronoUnit.SECONDS);
         Claim response = inputGrant(job, lease, leaseExpires, now);
         repository.assignLease(id, lease, leaseExpires);
         return response;
+    }
+
+    @Transactional
+    public LeaseHeartbeat heartbeat(UUID id, UUID lease) {
+        MediaJob job = loadForUpdate(id);
+        requireLease(job, lease);
+        Instant now = Instant.now();
+        if (!job.hasActiveLease(now)) throw conflict("The worker lease is no longer active");
+        Instant requestedExpiry = now.plus(LEASE_DURATION).truncatedTo(ChronoUnit.SECONDS);
+        Instant leaseExpires = job.leaseExpiresAt().isAfter(requestedExpiry) ? job.leaseExpiresAt() : requestedExpiry;
+        if (repository.extendLease(id, lease, now, leaseExpires) != 1) {
+            throw conflict("The worker lease is no longer active");
+        }
+        return new LeaseHeartbeat(leaseExpires);
     }
 
     @Transactional

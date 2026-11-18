@@ -78,6 +78,13 @@ class MediaController {
         return noStore(jobs.failInput(jobId, request.leaseId(), request.retryable()));
     }
 
+    @PostMapping("/internal/media/jobs/{jobId}/heartbeat")
+    ResponseEntity<MediaJobs.LeaseHeartbeat> heartbeat(@RequestHeader(value = "Authorization", required = false) String token,
+                                                       @PathVariable UUID jobId, @RequestBody LeaseRequest request) {
+        access.requireWorker(token);
+        return noStore(jobs.heartbeat(jobId, request.leaseId()));
+    }
+
     @PostMapping("/internal/media/jobs/{jobId}/result-upload")
     ResponseEntity<MediaJobs.Transfer> resultUpload(@RequestHeader(value = "Authorization", required = false) String token,
                                                      @PathVariable UUID jobId, @RequestBody ResultRequest request) {

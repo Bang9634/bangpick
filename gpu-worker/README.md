@@ -18,6 +18,7 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 ```sh
 .venv/bin/bangpick-worker download-next --work-dir ../outputs/worker
 .venv/bin/bangpick-worker download <job-id> --work-dir ../outputs/worker
+.venv/bin/bangpick-worker heartbeat <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker upload <job-id> ./room.ply --work-dir ../outputs/worker
 ```
 
@@ -26,6 +27,8 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 `download-next`에서 입력 URL 요청이나 원본 다운로드가 실패하면 점유 ID로 `input-failed`를 보고합니다. 일시 오류는 백엔드가 30초·60초 뒤 재시도하도록 대기시키고, 세 번째 실패나 다시 받아도 해결되지 않는 응답 오류는 `FAILED`로 기록합니다. 이때 명령은 오류로 종료합니다. `QUEUED`로 돌아간 작업은 대기 시간이 지난 뒤 `download-next`로 다시 가져올 수 있습니다. 실패 보고까지 실패했다면 점유 파일을 보존하므로 출력된 작업 ID로 `download <job-id> --work-dir ...`를 재시도할 수 있습니다. 작업 ID를 직접 지정한 `download` 명령은 자동 실패 보고를 하지 않습니다.
 
 `lease` 파일에는 마지막으로 받은 점유 ID가 남습니다. 실패 보고 후에는 그 ID가 더 이상 유효하지 않으며, 작업을 다시 점유하면 새 ID로 덮어씁니다.
+
+`heartbeat`는 저장된 점유 ID로 백엔드에 한 번 갱신을 요청하고 새 만료 시각을 출력합니다. 이미 만료된 점유는 갱신할 수 없습니다. 현재 CLI에는 주기적인 자동 호출이나 학습 프로세스 감시가 없으므로, 이 명령만으로 장시간 작업의 점유 유지가 자동화되지는 않습니다.
 
 작업 폴더·실제 모델·개발용 토큰을 커밋하지 않습니다. 이미 PLY 업로드가 끝났는데 완료 응답만 실패했다면 `complete <job-id> --work-dir ../outputs/worker`를 실행합니다. PLY 업로드가 실패했다면 `upload`를 재실행해 새 URL을 받습니다.
 
