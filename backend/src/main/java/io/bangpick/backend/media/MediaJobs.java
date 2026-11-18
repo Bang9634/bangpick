@@ -23,6 +23,8 @@ class MediaJobs {
     private static final Duration LEASE_DURATION = Duration.ofHours(6);
     private static final Duration READ_GRANT_DURATION = Duration.ofMinutes(5);
     private static final Duration WRITE_GRANT_DURATION = Duration.ofMinutes(15);
+    private static final int MAX_ATTEMPTS = 3;
+    private static final Duration RETRY_DELAY = Duration.ofSeconds(30);
     private static final Map<String, String> VIDEO_EXTENSIONS = Map.of(
             "video/mp4", ".mp4", "video/quicktime", ".mov", "video/webm", ".webm");
 
@@ -86,7 +88,7 @@ class MediaJobs {
     @Transactional
     public Optional<NextClaim> claimNext() {
         Instant now = Instant.now();
-        return repository.findNextQueuedForUpdate(now).map(id -> {
+        return repository.findNextQueuedForUpdate(now, MAX_ATTEMPTS).map(id -> {
             UUID lease = UUID.randomUUID();
             Instant leaseExpires = now.plus(LEASE_DURATION);
             repository.assignLease(id, lease, leaseExpires);
@@ -106,12 +108,35 @@ class MediaJobs {
         if (job.status() != Status.QUEUED && job.status() != Status.PROCESSING) {
             throw conflict("The job cannot be claimed");
         }
+        if (job.attemptCount() >= MAX_ATTEMPTS) throw conflict("The job has reached its attempt limit");
+        if (job.status() == Status.QUEUED &&
+                (job.availableAt() == null || job.availableAt().isAfter(now))) {
+            throw conflict("The job is not yet available");
+        }
         storage.revoke(job.resultGrantId());
         UUID lease = UUID.randomUUID();
         Instant leaseExpires = now.plus(LEASE_DURATION);
         Claim response = inputGrant(job, lease, leaseExpires, now);
         repository.assignLease(id, lease, leaseExpires);
         return response;
+    }
+
+    @Transactional
+    public JobView failInput(UUID id, UUID lease, Boolean retryable) {
+        if (retryable == null) throw new ResponseStatusException(BAD_REQUEST, "Specify whether the failure is retryable");
+        MediaJob job = loadForUpdate(id);
+        if (lease != null && lease.equals(job.lastFailureLeaseId()) &&
+                (job.status() == Status.QUEUED || job.status() == Status.FAILED)) return view(job);
+        requireLease(job, lease);
+        requireActiveLease(job);
+        if (job.resultGrantId() != null || job.resultKey() != null) {
+            throw conflict("Input failure can only be reported before result upload");
+        }
+        boolean retry = retryable && job.attemptCount() < MAX_ATTEMPTS;
+        Status next = retry ? Status.QUEUED : Status.FAILED;
+        Instant available = retry ? Instant.now().plus(RETRY_DELAY.multipliedBy(1L << (job.attemptCount() - 1))) : null;
+        repository.recordInputFailure(id, lease, next, available);
+        return new JobView(id, next);
     }
 
     @Transactional

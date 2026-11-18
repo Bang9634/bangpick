@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from bangpick_worker.transfers import TransferError, Transfers
+from bangpick_worker.transfers import PermanentTransferError, TransferError, Transfers
 
 
 class FixtureOpener:
@@ -87,6 +87,6 @@ class TransferTests(unittest.TestCase):
         with self.assertRaises(TransferError):
             Transfers("http://backend.example.test/api", "t" * 32)
         with TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(TransferError, "Invalid object transfer grant"):
+            with self.assertRaisesRegex(PermanentTransferError, "Invalid object transfer grant"):
                 self.client.download({"method": "GET", "sizeBytes": 3, "url": "http://storage.example.test/key"},
                                      Path(directory) / "video")

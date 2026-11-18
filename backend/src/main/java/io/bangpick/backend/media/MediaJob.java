@@ -5,8 +5,9 @@ import java.util.UUID;
 
 record MediaJob(UUID id, String ownerId, Status status, String videoType, long videoBytes,
                 String inputGrantId, Instant uploadExpiresAt, UUID leaseId, Instant leaseExpiresAt,
+                Instant availableAt, int attemptCount, UUID lastFailureLeaseId,
                 String resultGrantId, String resultKey, long resultBytes) {
-    enum Status { UPLOADING, QUEUED, PROCESSING, RESULT_READY }
+    enum Status { UPLOADING, QUEUED, PROCESSING, RESULT_READY, FAILED }
 
     boolean hasActiveLease(Instant now) {
         return status == Status.PROCESSING && leaseExpiresAt != null && leaseExpiresAt.isAfter(now);

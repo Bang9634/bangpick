@@ -123,6 +123,8 @@ class MediaTransferTests {
                 Map.of("leaseId", UUID.randomUUID().toString(), "sizeBytes", 80));
         String firstResultUrl = url(body(send(200, workerPath + "/result-upload", WORKER,
                 Map.of("leaseId", lease, "sizeBytes", 80))));
+        send(409, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", lease, "retryable", true));
         String previousKey = storage.permissions(firstResultUrl).key();
         storage.put(firstResultUrl, 79);
         send(409, workerPath + "/result-complete", WORKER, Map.of("leaseId", lease));
@@ -172,6 +174,8 @@ class MediaTransferTests {
                 Map.of("leaseId", previousLease, "sizeBytes", 80))));
         storage.put(previousResultUrl, 80);
         jdbc.update("UPDATE media_jobs SET lease_expires = ? WHERE id = ?", 0L, id);
+        send(409, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", previousLease, "retryable", true));
 
         String newLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asString();
         assertThat(newLease).isNotEqualTo(previousLease);
@@ -233,6 +237,60 @@ class MediaTransferTests {
         }
         assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, jobId))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void retryableInputFailuresBackOffAndStopAfterThreeAttempts() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        String firstLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        long beforeFirstFailure = Instant.now().getEpochSecond();
+        assertThat(body(send(200, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true))).path("status").asText()).isEqualTo("QUEUED");
+        assertThat(body(send(200, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true))).path("status").asText()).isEqualTo("QUEUED");
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id))
+                .isBetween(beforeFirstFailure + 30, beforeFirstFailure + 32);
+        assertThat(jdbc.queryForObject("SELECT lease_id FROM media_jobs WHERE id = ?", String.class, id)).isNull();
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("INPUT_DOWNLOAD_FAILED");
+        send(409, workerPath + "/claim", WORKER, Map.of());
+        send(409, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", UUID.randomUUID().toString(), "retryable", true));
+
+        jdbc.update("UPDATE media_jobs SET available_at = 0 WHERE id = ?", id);
+        String secondLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        send(409, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true));
+        long beforeSecondFailure = Instant.now().getEpochSecond();
+        assertThat(body(send(200, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", secondLease, "retryable", true))).path("status").asText()).isEqualTo("QUEUED");
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id))
+                .isBetween(beforeSecondFailure + 60, beforeSecondFailure + 62);
+
+        jdbc.update("UPDATE media_jobs SET available_at = 0 WHERE id = ?", id);
+        String thirdLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        assertThat(body(send(200, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", thirdLease, "retryable", true))).path("status").asText()).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id)).isNull();
+        send(409, workerPath + "/claim", WORKER, Map.of());
+    }
+
+    @Test
+    void permanentInputFailureStopsAfterOneAttempt() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        String lease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        send(400, workerPath + "/input-failed", WORKER, Map.of("leaseId", lease));
+        assertThat(body(send(200, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", lease, "retryable", false))).path("status").asText()).isEqualTo("FAILED");
+        assertThat(body(send(200, "/media/jobs/" + id, OWNER, null)).path("status").asText()).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(1);
+        send(409, workerPath + "/result-upload", WORKER,
+                Map.of("leaseId", lease, "sizeBytes", 80));
     }
 
     private String queueVideo() throws Exception {

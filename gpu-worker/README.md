@@ -21,7 +21,11 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 .venv/bin/bangpick-worker upload <job-id> ./room.ply --work-dir ../outputs/worker
 ```
 
-`download-next`는 백엔드의 `claim-next`를 한 번 호출합니다. 대기 작업이 없으면 `No queued job`을 출력하고 정상 종료합니다. 작업이 있으면 `<job-id>/lease`에 점유 ID를 먼저 저장하고 `<job-id>/source.*`에 영상을 다운로드합니다. 다운로드가 실패했다면 출력된 작업 ID 또는 생성된 폴더 이름으로 `download <job-id> --work-dir ...`를 다시 실행할 수 있습니다. 현재 명령은 한 번 실행하고 종료하며 학습을 시작하지 않습니다.
+`download-next`는 백엔드의 `claim-next`를 한 번 호출합니다. 대기 작업이 없으면 `No queued job`을 출력하고 정상 종료합니다. 작업이 있으면 `<job-id>/lease`에 점유 ID를 먼저 저장하고 `<job-id>/source.*`에 영상을 다운로드합니다. 현재 명령은 한 번 실행하고 종료하며 학습을 시작하지 않습니다.
+
+`download-next`에서 입력 URL 요청이나 원본 다운로드가 실패하면 점유 ID로 `input-failed`를 보고합니다. 일시 오류는 백엔드가 30초·60초 뒤 재시도하도록 대기시키고, 세 번째 실패나 다시 받아도 해결되지 않는 응답 오류는 `FAILED`로 기록합니다. 이때 명령은 오류로 종료합니다. `QUEUED`로 돌아간 작업은 대기 시간이 지난 뒤 `download-next`로 다시 가져올 수 있습니다. 실패 보고까지 실패했다면 점유 파일을 보존하므로 출력된 작업 ID로 `download <job-id> --work-dir ...`를 재시도할 수 있습니다. 작업 ID를 직접 지정한 `download` 명령은 자동 실패 보고를 하지 않습니다.
+
+`lease` 파일에는 마지막으로 받은 점유 ID가 남습니다. 실패 보고 후에는 그 ID가 더 이상 유효하지 않으며, 작업을 다시 점유하면 새 ID로 덮어씁니다.
 
 작업 폴더·실제 모델·개발용 토큰을 커밋하지 않습니다. 이미 PLY 업로드가 끝났는데 완료 응답만 실패했다면 `complete <job-id> --work-dir ../outputs/worker`를 실행합니다. PLY 업로드가 실패했다면 `upload`를 재실행해 새 URL을 받습니다.
 

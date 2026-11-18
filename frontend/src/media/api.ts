@@ -1,5 +1,5 @@
 export type Transfer = { url: string; method: 'GET' | 'PUT'; expiresAt: string; sizeBytes: number }
-export type Job = { jobId: string; status: 'UPLOADING' | 'QUEUED' | 'PROCESSING' | 'RESULT_READY' }
+export type Job = { jobId: string; status: 'UPLOADING' | 'QUEUED' | 'PROCESSING' | 'RESULT_READY' | 'FAILED' }
 type Started = { jobId: string; transfer: Transfer }
 type MediaRequest = { method?: 'GET' | 'POST'; payload?: object; signal?: AbortSignal }
 

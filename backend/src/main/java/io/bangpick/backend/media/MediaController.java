@@ -29,6 +29,9 @@ class MediaController {
     record ResultRequest(UUID leaseId, Long sizeBytes) {
         @Override public String toString() { return "ResultRequest[sizeBytes=" + sizeBytes + "]"; }
     }
+    record InputFailureRequest(UUID leaseId, Boolean retryable) {
+        @Override public String toString() { return "InputFailureRequest[retryable=" + retryable + "]"; }
+    }
 
     @PostMapping("/media/jobs")
     ResponseEntity<MediaJobs.Upload> start(@RequestHeader(value = "Authorization", required = false) String token,
@@ -66,6 +69,13 @@ class MediaController {
         access.requireWorker(token);
         return jobs.claimNext().map(MediaController::noStore)
                 .orElseGet(() -> ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build());
+    }
+
+    @PostMapping("/internal/media/jobs/{jobId}/input-failed")
+    ResponseEntity<MediaJobs.JobView> inputFailed(@RequestHeader(value = "Authorization", required = false) String token,
+                                                  @PathVariable UUID jobId, @RequestBody InputFailureRequest request) {
+        access.requireWorker(token);
+        return noStore(jobs.failInput(jobId, request.leaseId(), request.retryable()));
     }
 
     @PostMapping("/internal/media/jobs/{jobId}/result-upload")

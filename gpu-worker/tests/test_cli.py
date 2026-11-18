@@ -5,7 +5,7 @@ import unittest
 from uuid import uuid4
 
 from bangpick_worker.__main__ import run
-from bangpick_worker.transfers import TransferError
+from bangpick_worker.transfers import PermanentTransferError, TransferError
 
 
 class DownloadNextTests(unittest.TestCase):
@@ -50,17 +50,52 @@ class DownloadNextTests(unittest.TestCase):
         lease_id = uuid4()
 
         class FailingBackend:
+            def __init__(self):
+                self.actions = []
+
             def claim_next(self):
                 return {"jobId": str(job_id), "leaseId": str(lease_id)}
 
             def command(self, actual_job_id, action, payload):
+                self.actions.append(action)
                 raise TransferError("Backend unavailable")
 
+        backend = FailingBackend()
         with TemporaryDirectory() as temporary:
             work_dir = Path(temporary)
-            with self.assertRaises(TransferError):
-                run(Namespace(action="download-next", work_dir=work_dir), FailingBackend())
+            with self.assertRaisesRegex(TransferError, "did not confirm the failure"):
+                run(Namespace(action="download-next", work_dir=work_dir), backend)
             self.assertEqual((work_dir / str(job_id) / "lease").read_text(encoding="ascii"), str(lease_id))
+        self.assertEqual(backend.actions, ["claim", "input-failed"])
+
+    def test_download_failure_reports_retryable_or_permanent_error(self):
+        for error, retryable in ((TransferError("Download interrupted"), True),
+                                 (PermanentTransferError("Invalid grant"), False)):
+            with self.subTest(retryable=retryable), TemporaryDirectory() as temporary:
+                job_id = uuid4()
+                lease_id = uuid4()
+
+                class FailingDownload:
+                    def __init__(self):
+                        self.report = None
+
+                    def claim_next(self):
+                        return {"jobId": str(job_id), "leaseId": str(lease_id)}
+
+                    def command(self, actual_job_id, action, payload):
+                        if action == "input-failed":
+                            self.report = (actual_job_id, payload)
+                            return {"status": "QUEUED" if retryable else "FAILED"}
+                        return {"leaseId": str(lease_id), "extension": ".mp4", "transfer": {}}
+
+                    def download(self, grant, target):
+                        raise error
+
+                backend = FailingDownload()
+                with self.assertRaises(TransferError):
+                    run(Namespace(action="download-next", work_dir=Path(temporary)), backend)
+                self.assertEqual(backend.report,
+                                 (str(job_id), {"leaseId": str(lease_id), "retryable": retryable}))
 
 
 if __name__ == "__main__":

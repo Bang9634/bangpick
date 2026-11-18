@@ -7,7 +7,7 @@ import sys
 from tempfile import NamedTemporaryFile
 from uuid import UUID
 
-from .transfers import TransferError, Transfers
+from .transfers import PermanentTransferError, TransferError, Transfers
 
 
 def save_lease(path: Path, lease: str) -> None:
@@ -18,6 +18,17 @@ def save_lease(path: Path, lease: str) -> None:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def report_input_failure(transfers: Transfers, job_id: str, lease: str, retryable: bool) -> None:
+    try:
+        result = transfers.command(job_id, "input-failed", {"leaseId": lease, "retryable": retryable})
+    except TransferError:
+        raise TransferError("Input failed and the backend did not confirm the failure; keep the lease file") from None
+    status = result.get("status")
+    if status not in {"QUEUED", "FAILED"}:
+        raise TransferError("Backend returned an invalid failure status; keep the lease file")
+    print(f"Job {job_id} is {status} after input failure")
 
 
 def run(args: argparse.Namespace, transfers: Transfers) -> None:
@@ -41,19 +52,25 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
         lease_file = directory / "lease"
         lease = str(UUID(lease_file.read_text(encoding="ascii").strip())) if lease_file.exists() else None
     if args.action in {"download", "download-next"}:
-        claim = transfers.command(job_id, "claim", {"leaseId": lease})
-        claimed_lease = str(UUID(claim["leaseId"]))
-        if args.action == "download-next" and claimed_lease != lease:
-            raise TransferError("Backend returned a different lease for the queued job")
-        lease = claimed_lease
-        extension = claim["extension"]
-        if extension not in {".mp4", ".mov", ".webm"}:
-            raise TransferError("Backend returned an unsupported video extension")
-        directory.mkdir(parents=True, exist_ok=True)
-        # 백엔드는 이미 점유를 부여했다. 다운로드가 실패해도 같은 점유로 재시도할 수 있게 먼저 저장한다.
-        save_lease(lease_file, lease)
-        target = directory / ("source" + extension)
-        transfers.download(claim["transfer"], target)
+        try:
+            claim = transfers.command(job_id, "claim", {"leaseId": lease})
+            claimed_lease = str(UUID(claim["leaseId"]))
+            if args.action == "download-next" and claimed_lease != lease:
+                raise PermanentTransferError("Backend returned a different lease for the queued job")
+            lease = claimed_lease
+            extension = claim["extension"]
+            if extension not in {".mp4", ".mov", ".webm"}:
+                raise PermanentTransferError("Backend returned an unsupported video extension")
+            directory.mkdir(parents=True, exist_ok=True)
+            # 백엔드는 이미 점유를 부여했다. 다운로드가 실패해도 같은 점유로 재시도할 수 있게 먼저 저장한다.
+            save_lease(lease_file, lease)
+            target = directory / ("source" + extension)
+            transfers.download(claim["transfer"], target)
+        except (TransferError, OSError, ValueError, TypeError, AttributeError, KeyError) as error:
+            if args.action == "download-next":
+                retryable = isinstance(error, (TransferError, OSError)) and not isinstance(error, PermanentTransferError)
+                report_input_failure(transfers, job_id, lease, retryable)
+            raise
         print(f"Source saved to {target}")
         return
     if not lease:

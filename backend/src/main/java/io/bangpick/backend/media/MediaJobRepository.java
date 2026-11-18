@@ -11,7 +11,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 final class MediaJobRepository {
     private static final String SELECT_BY_ID = """
             SELECT id, owner_id, status, video_type, video_bytes, input_par_id, upload_expires,
-                   lease_id, lease_expires, result_par_id, result_key, result_bytes
+                   lease_id, lease_expires, available_at, attempt_count, last_failure_lease_id,
+                   result_par_id, result_key, result_bytes
             FROM media_jobs WHERE id = ?
             """;
 
@@ -31,14 +32,14 @@ final class MediaJobRepository {
     }
 
     // 호출자의 트랜잭션 안에서 선택한 행을 잠가 다른 Worker의 중복 점유를 막는다.
-    Optional<UUID> findNextQueuedForUpdate(Instant now) {
+    Optional<UUID> findNextQueuedForUpdate(Instant now, int maxAttempts) {
         return jdbc.query("""
                 SELECT id FROM media_jobs
-                WHERE status = ? AND available_at <= ?
+                WHERE status = ? AND available_at <= ? AND attempt_count < ?
                 ORDER BY queued_at, id
                 LIMIT 1 FOR UPDATE SKIP LOCKED
                 """, (rs, rowNumber) -> UUID.fromString(rs.getString("id")),
-                Status.QUEUED.name(), now.getEpochSecond()).stream().findFirst();
+                Status.QUEUED.name(), now.getEpochSecond(), maxAttempts).stream().findFirst();
     }
 
     void insertUpload(UUID id, String ownerId, String videoType, long videoBytes,
@@ -65,8 +66,19 @@ final class MediaJobRepository {
         jdbc.update("""
                 UPDATE media_jobs SET status = ?, lease_id = ?, lease_expires = ?,
                     attempt_count = attempt_count + 1,
+                    last_failure_lease_id = NULL,
                     result_par_id = NULL, result_key = NULL, result_bytes = NULL WHERE id = ?
                 """, Status.PROCESSING.name(), leaseId.toString(), leaseExpiresAt.getEpochSecond(), id.toString());
+    }
+
+    void recordInputFailure(UUID id, UUID leaseId, Status nextStatus, Instant availableAt) {
+        jdbc.update("""
+                UPDATE media_jobs
+                SET status = ?, available_at = ?, lease_id = NULL, lease_expires = NULL,
+                    last_error_code = ?, last_failure_lease_id = ?
+                WHERE id = ? AND status = ? AND lease_id = ?
+                """, nextStatus.name(), availableAt == null ? null : availableAt.getEpochSecond(),
+                "INPUT_DOWNLOAD_FAILED", leaseId.toString(), id.toString(), Status.PROCESSING.name(), leaseId.toString());
     }
 
     void recordResultUpload(UUID id, String resultGrantId, String resultKey, long resultBytes) {
@@ -87,11 +99,15 @@ final class MediaJobRepository {
         String leaseId = rs.getString("lease_id");
         // 만료 시각은 Unix 초 단위로 저장하며, 아직 점유하지 않은 작업의 NULL은 그대로 읽는다.
         Long leaseExpires = rs.getObject("lease_expires", Long.class);
+        Long availableAt = rs.getObject("available_at", Long.class);
+        String lastFailureLeaseId = rs.getString("last_failure_lease_id");
         return new MediaJob(UUID.fromString(rs.getString("id")), rs.getString("owner_id"),
                 Status.valueOf(rs.getString("status")), rs.getString("video_type"), rs.getLong("video_bytes"),
                 rs.getString("input_par_id"), Instant.ofEpochSecond(rs.getLong("upload_expires")),
                 leaseId == null ? null : UUID.fromString(leaseId),
                 leaseExpires == null ? null : Instant.ofEpochSecond(leaseExpires),
+                availableAt == null ? null : Instant.ofEpochSecond(availableAt), rs.getInt("attempt_count"),
+                lastFailureLeaseId == null ? null : UUID.fromString(lastFailureLeaseId),
                 rs.getString("result_par_id"), rs.getString("result_key"), rs.getLong("result_bytes"));
     }
 }
