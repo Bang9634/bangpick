@@ -138,19 +138,29 @@ class MediaJobs {
 
     @Transactional
     public JobView failInput(UUID id, UUID lease, Boolean retryable) {
+        return failAttempt(id, lease, retryable, "INPUT_DOWNLOAD_FAILED");
+    }
+
+    @Transactional
+    public JobView failProcessing(UUID id, UUID lease, Boolean retryable) {
+        return failAttempt(id, lease, retryable, "PROCESSING_FAILED");
+    }
+
+    private JobView failAttempt(UUID id, UUID lease, Boolean retryable, String errorCode) {
         if (retryable == null) throw new ResponseStatusException(BAD_REQUEST, "Specify whether the failure is retryable");
         MediaJob job = loadForUpdate(id);
         if (lease != null && lease.equals(job.lastFailureLeaseId()) &&
+                errorCode.equals(job.lastErrorCode()) &&
                 (job.status() == Status.QUEUED || job.status() == Status.FAILED)) return view(job);
         requireLease(job, lease);
         requireActiveLease(job);
         if (job.resultGrantId() != null || job.resultKey() != null) {
-            throw conflict("Input failure can only be reported before result upload");
+            throw conflict("Failure can only be reported before result upload");
         }
         boolean retry = retryable && job.attemptCount() < MAX_ATTEMPTS;
         Status next = retry ? Status.QUEUED : Status.FAILED;
         Instant available = retry ? Instant.now().plus(RETRY_DELAY.multipliedBy(1L << (job.attemptCount() - 1))) : null;
-        repository.recordInputFailure(id, lease, next, available);
+        repository.recordFailure(id, lease, next, available, errorCode);
         return new JobView(id, next);
     }
 

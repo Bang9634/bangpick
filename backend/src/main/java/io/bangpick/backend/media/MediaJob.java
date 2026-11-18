@@ -5,7 +5,7 @@ import java.util.UUID;
 
 record MediaJob(UUID id, String ownerId, Status status, String videoType, long videoBytes,
                 String inputGrantId, Instant uploadExpiresAt, UUID leaseId, Instant leaseExpiresAt,
-                Instant availableAt, int attemptCount, UUID lastFailureLeaseId,
+                Instant availableAt, int attemptCount, UUID lastFailureLeaseId, String lastErrorCode,
                 String resultGrantId, String resultKey, long resultBytes) {
     enum Status { UPLOADING, QUEUED, PROCESSING, RESULT_READY, FAILED }
 

@@ -125,6 +125,8 @@ class MediaTransferTests {
                 Map.of("leaseId", lease, "sizeBytes", 80))));
         send(409, workerPath + "/input-failed", WORKER,
                 Map.of("leaseId", lease, "retryable", true));
+        send(409, workerPath + "/processing-failed", WORKER,
+                Map.of("leaseId", lease, "retryable", true));
         String previousKey = storage.permissions(firstResultUrl).key();
         storage.put(firstResultUrl, 79);
         send(409, workerPath + "/result-complete", WORKER, Map.of("leaseId", lease));
@@ -293,6 +295,54 @@ class MediaTransferTests {
         send(409, workerPath + "/result-upload", WORKER,
                 Map.of("leaseId", lease, "sizeBytes", 80));
         send(409, workerPath + "/heartbeat", WORKER, Map.of("leaseId", lease));
+    }
+
+    @Test
+    void processingFailureUsesCurrentLeaseAndRetryPolicy() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        send(401, workerPath + "/processing-failed", OWNER,
+                Map.of("leaseId", UUID.randomUUID().toString(), "retryable", true));
+        String firstLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        send(400, workerPath + "/processing-failed", WORKER, Map.of("leaseId", firstLease));
+        send(409, workerPath + "/processing-failed", WORKER,
+                Map.of("leaseId", UUID.randomUUID().toString(), "retryable", true));
+
+        long beforeFailure = Instant.now().getEpochSecond();
+        assertThat(body(send(200, workerPath + "/processing-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true))).path("status").asText()).isEqualTo("QUEUED");
+        assertThat(body(send(200, workerPath + "/processing-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true))).path("status").asText()).isEqualTo("QUEUED");
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id))
+                .isBetween(beforeFailure + 30, beforeFailure + 32);
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("PROCESSING_FAILED");
+        assertThat(jdbc.queryForObject("SELECT lease_id FROM media_jobs WHERE id = ?", String.class, id)).isNull();
+        send(409, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true));
+
+        jdbc.update("UPDATE media_jobs SET available_at = 0 WHERE id = ?", id);
+        String secondLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        send(409, workerPath + "/processing-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true));
+        assertThat(body(send(200, workerPath + "/processing-failed", WORKER,
+                Map.of("leaseId", secondLease, "retryable", false))).path("status").asText()).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id)).isNull();
+        assertThat(body(send(200, "/media/jobs/" + id, OWNER, null)).path("status").asText()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void expiredProcessingLeaseCannotReportFailure() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        String lease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        jdbc.update("UPDATE media_jobs SET lease_expires = 0 WHERE id = ?", id);
+        send(409, workerPath + "/processing-failed", WORKER,
+                Map.of("leaseId", lease, "retryable", true));
+        assertThat(jdbc.queryForObject("SELECT status FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("PROCESSING");
     }
 
     @Test

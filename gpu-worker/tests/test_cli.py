@@ -6,6 +6,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from bangpick_worker.__main__ import run
+from bangpick_worker.supervisor import ProcessStartError
 from bangpick_worker.transfers import PermanentTransferError, TransferError
 
 
@@ -139,22 +140,119 @@ class RunProcessTests(unittest.TestCase):
             command = ["python", "processor.py"]
             with patch("bangpick_worker.__main__.supervise", return_value=0) as supervisor:
                 run(Namespace(action="run-process", job_id=job_id, work_dir=work_dir,
-                              processor=command), object())
+                              processor=command, retryable=False), object())
             supervisor.assert_called_once_with(str(job_id), str(lease_id), work_dir,
                                                command, unittest.mock.ANY)
 
-    def test_run_process_reports_nonzero_exit_without_completing_job(self):
+    def test_run_process_reports_nonzero_exit_as_retryable(self):
         job_id = uuid4()
         lease_id = uuid4()
+        class FailureBackend:
+            def __init__(self):
+                self.calls = []
+
+            def command(self, actual_job_id, action, payload):
+                self.calls.append((actual_job_id, action, payload))
+                return {"status": "QUEUED"}
+
+        backend = FailureBackend()
         with TemporaryDirectory() as temporary:
             work_dir = Path(temporary)
             job_dir = work_dir / str(job_id)
             job_dir.mkdir()
             (job_dir / "lease").write_text(str(lease_id), encoding="ascii")
             with patch("bangpick_worker.__main__.supervise", return_value=2):
-                with self.assertRaisesRegex(TransferError, "remains PROCESSING"):
+                with self.assertRaisesRegex(TransferError, "exited with code 2"):
                     run(Namespace(action="run-process", job_id=job_id, work_dir=work_dir,
-                                  processor=["python"]), object())
+                                  processor=["python"], retryable=True), backend)
+        self.assertEqual(backend.calls, [(str(job_id), "processing-failed",
+                                          {"leaseId": str(lease_id), "retryable": True})])
+
+    def test_start_failure_reports_permanent_failure(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+        calls = []
+
+        class FailureBackend:
+            def command(self, actual_job_id, action, payload):
+                calls.append((actual_job_id, action, payload))
+                return {"status": "FAILED"}
+
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            (job_dir / "lease").write_text(str(lease_id), encoding="ascii")
+            with patch("bangpick_worker.__main__.supervise", side_effect=ProcessStartError("No processor")):
+                with self.assertRaisesRegex(ProcessStartError, "No processor"):
+                    run(Namespace(action="run-process", job_id=job_id, work_dir=work_dir,
+                                  processor=["missing"], retryable=False), FailureBackend())
+        self.assertEqual(calls, [(str(job_id), "processing-failed",
+                                  {"leaseId": str(lease_id), "retryable": False})])
+
+    def test_failed_report_can_be_retried_without_rerunning_command(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+
+        class FailureBackend:
+            def command(self, actual_job_id, action, payload):
+                self.request = (actual_job_id, action, payload)
+                return {"status": "FAILED"}
+
+        backend = FailureBackend()
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            (job_dir / "lease").write_text(str(lease_id), encoding="ascii")
+            run(Namespace(action="processing-failed", job_id=job_id, work_dir=work_dir,
+                          retryable=False), backend)
+        self.assertEqual(backend.request, (str(job_id), "processing-failed",
+                                           {"leaseId": str(lease_id), "retryable": False}))
+
+    def test_unconfirmed_processing_failure_keeps_lease_for_report_retry(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+
+        class UnavailableBackend:
+            def command(self, actual_job_id, action, payload):
+                raise TransferError("Backend unavailable")
+
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            lease_file = job_dir / "lease"
+            lease_file.write_text(str(lease_id), encoding="ascii")
+            with patch("bangpick_worker.__main__.supervise", return_value=2):
+                with self.assertRaisesRegex(TransferError, "did not confirm the failure"):
+                    run(Namespace(action="run-process", job_id=job_id, work_dir=work_dir,
+                                  processor=["python"], retryable=False), UnavailableBackend())
+            self.assertEqual(lease_file.read_text(encoding="ascii"), str(lease_id))
+
+    def test_unknown_heartbeat_failure_does_not_requeue_job(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+
+        class RecordingBackend:
+            def __init__(self):
+                self.calls = []
+
+            def command(self, actual_job_id, action, payload):
+                self.calls.append(action)
+                return {"status": "QUEUED"}
+
+        backend = RecordingBackend()
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            (job_dir / "lease").write_text(str(lease_id), encoding="ascii")
+            with patch("bangpick_worker.__main__.supervise", side_effect=TransferError("Heartbeat failed")):
+                with self.assertRaisesRegex(TransferError, "Heartbeat failed"):
+                    run(Namespace(action="run-process", job_id=job_id, work_dir=work_dir,
+                                  processor=["python"], retryable=True), backend)
+        self.assertEqual(backend.calls, [])
 
 
 if __name__ == "__main__":

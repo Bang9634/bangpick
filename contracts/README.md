@@ -19,6 +19,7 @@ API 호출 순서와 파일이 이동하는 방향은 [OCI 전송 흐름도](../
 | Worker | `POST /api/internal/media/jobs/claim-next` | 본문 없음 | `{jobId, leaseId, leaseExpiresAt}` 또는 대기 작업이 없으면 `204 No Content` |
 | Worker | `POST /api/internal/media/jobs/{jobId}/claim` | `{leaseId: null}` 또는 기존 `leaseId` | `{leaseId, leaseExpiresAt, extension, transfer}` |
 | Worker | `POST /api/internal/media/jobs/{jobId}/input-failed` | `{leaseId, retryable}` | `{jobId, status}` (`QUEUED` 또는 `FAILED`) |
+| Worker | `POST /api/internal/media/jobs/{jobId}/processing-failed` | `{leaseId, retryable}` | `{jobId, status}` (`QUEUED` 또는 `FAILED`) |
 | Worker | `POST /api/internal/media/jobs/{jobId}/heartbeat` | `{leaseId}` | `{leaseExpiresAt}` |
 | Worker | `POST /api/internal/media/jobs/{jobId}/result-upload` | `{leaseId, sizeBytes}` | `transfer` |
 | Worker | `POST /api/internal/media/jobs/{jobId}/result-complete` | `{leaseId}` | `{jobId, status}` |
@@ -29,7 +30,7 @@ API 호출 순서와 파일이 이동하는 방향은 [OCI 전송 흐름도](../
 
 - 상태: `UPLOADING → QUEUED → PROCESSING → RESULT_READY`. 입력 다운로드 실패를 보고하면 `PROCESSING → QUEUED`(재시도) 또는 `PROCESSING → FAILED`(최종 실패)가 됩니다. `RESULT_READY`는 **파일 저장 확인**을 뜻하며, 소유자에게만 미리보기를 허용합니다. 검수 승인이나 공개를 의미하지 않습니다.
 - 자동 점유는 실행 가능한 `QUEUED` 작업을 `queued_at`, 작업 ID 순으로 선택하고 한 트랜잭션에서 `PROCESSING`으로 바꿉니다. `available_at`이 미래인 작업과 다른 Worker가 잠근 행은 점유하지 않습니다. 선택 후 받은 `leaseId`로 지정 작업의 `/claim`을 호출하면 원본 읽기 URL을 받습니다. 작업 ID를 지정하고 `leaseId: null`을 보내는 기존 수동 점유도 유지되며, 이 경로에는 대기 순서가 적용되지 않습니다.
-- 새 점유마다 `attempt_count`가 증가하고 최대 3번 점유할 수 있습니다. `input-failed`는 현재 유효한 점유 ID로 결과 업로드 전에만 호출할 수 있습니다. `retryable: true`이면 첫 실패 후 30초, 두 번째 실패 후 60초에 다시 선택할 수 있고 세 번째에는 `FAILED`가 됩니다. `retryable: false`이면 바로 `FAILED`입니다. 같은 점유 ID의 실패 보고 재요청은 상태를 다시 변경하지 않습니다. 대기 시각은 초 단위이므로 같은 초에 대기 상태가 된 작업은 작업 ID 순으로 처리합니다. 이 API만으로 GPU 전체의 동시 실행 수가 제한되거나 만료 작업이 자동 복구되지는 않습니다. V2 이전 대기 작업의 `queued_at = 0`은 실제 접수 시각이 아니라 시각 미상 표시값입니다.
+- 새 점유마다 `attempt_count`가 증가하고 최대 3번 점유할 수 있습니다. `input-failed`와 `processing-failed`는 현재 유효한 점유 ID로 결과 업로드 전에만 호출할 수 있습니다. `retryable: true`이면 첫 실패 후 30초, 두 번째 실패 후 60초에 다시 선택할 수 있고 세 번째에는 `FAILED`가 됩니다. `retryable: false`이면 바로 `FAILED`입니다. 같은 점유 ID·실패 종류의 보고를 재요청해도 상태를 다시 변경하지 않습니다. 두 종류는 DB에 각각 `INPUT_DOWNLOAD_FAILED`, `PROCESSING_FAILED`로 기록하며, 다른 종류로 재요청하면 거부합니다. 대기 시각은 초 단위이므로 같은 초에 대기 상태가 된 작업은 작업 ID 순으로 처리합니다. 이 API만으로 GPU 전체의 동시 실행 수가 제한되거나 만료 작업이 자동 복구되지는 않습니다. V2 이전 대기 작업의 `queued_at = 0`은 실제 접수 시각이 아니라 시각 미상 표시값입니다.
 - URL은 읽기 5분, 쓰기 최대 15분입니다. Worker 점유는 6시간이며 활성 점유 ID를 보관해야 합니다. 점유 만료 후 다른 실행이 작업을 다시 받을 수 있습니다. 결과 URL을 재발급하면 새 저장 키를 사용합니다.
 - `heartbeat`는 현재 `PROCESSING` 작업의 유효한 점유 ID에만 허용하고, 점유 만료 시각을 최소 호출 시점 6시간 뒤까지 연장합니다. 이미 만료됐거나 완료·실패한 작업의 점유는 되살리지 않습니다. 점유 횟수는 늘어나지 않습니다. Worker의 단발 명령은 한 번만 갱신하고, `run-process`는 로컬 처리 명령 실행 중 60초마다 호출합니다.
 - 상태 코드는 요청 형식 오류 `400`, 인증 실패 `401`, 없거나 소유자가 아닌 작업 `404`, 미완료·권한 없는 점유·크기 불일치 등 상태 충돌 `409`, 스토리지 오류 `502`입니다. 완료 요청은 동일 작업/점유에서 다시 호출할 수 있습니다. 잘못된 원본을 다시 올리려면 새 작업을 생성합니다.

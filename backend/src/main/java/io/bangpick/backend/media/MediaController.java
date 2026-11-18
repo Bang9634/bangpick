@@ -29,8 +29,8 @@ class MediaController {
     record ResultRequest(UUID leaseId, Long sizeBytes) {
         @Override public String toString() { return "ResultRequest[sizeBytes=" + sizeBytes + "]"; }
     }
-    record InputFailureRequest(UUID leaseId, Boolean retryable) {
-        @Override public String toString() { return "InputFailureRequest[retryable=" + retryable + "]"; }
+    record FailureRequest(UUID leaseId, Boolean retryable) {
+        @Override public String toString() { return "FailureRequest[retryable=" + retryable + "]"; }
     }
 
     @PostMapping("/media/jobs")
@@ -73,9 +73,16 @@ class MediaController {
 
     @PostMapping("/internal/media/jobs/{jobId}/input-failed")
     ResponseEntity<MediaJobs.JobView> inputFailed(@RequestHeader(value = "Authorization", required = false) String token,
-                                                  @PathVariable UUID jobId, @RequestBody InputFailureRequest request) {
+                                                  @PathVariable UUID jobId, @RequestBody FailureRequest request) {
         access.requireWorker(token);
         return noStore(jobs.failInput(jobId, request.leaseId(), request.retryable()));
+    }
+
+    @PostMapping("/internal/media/jobs/{jobId}/processing-failed")
+    ResponseEntity<MediaJobs.JobView> processingFailed(@RequestHeader(value = "Authorization", required = false) String token,
+                                                       @PathVariable UUID jobId, @RequestBody FailureRequest request) {
+        access.requireWorker(token);
+        return noStore(jobs.failProcessing(jobId, request.leaseId(), request.retryable()));
     }
 
     @PostMapping("/internal/media/jobs/{jobId}/heartbeat")

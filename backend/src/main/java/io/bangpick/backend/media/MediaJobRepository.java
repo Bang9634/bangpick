@@ -11,7 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 final class MediaJobRepository {
     private static final String SELECT_BY_ID = """
             SELECT id, owner_id, status, video_type, video_bytes, input_par_id, upload_expires,
-                   lease_id, lease_expires, available_at, attempt_count, last_failure_lease_id,
+                   lease_id, lease_expires, available_at, attempt_count, last_failure_lease_id, last_error_code,
                    result_par_id, result_key, result_bytes
             FROM media_jobs WHERE id = ?
             """;
@@ -71,14 +71,14 @@ final class MediaJobRepository {
                 """, Status.PROCESSING.name(), leaseId.toString(), leaseExpiresAt.getEpochSecond(), id.toString());
     }
 
-    void recordInputFailure(UUID id, UUID leaseId, Status nextStatus, Instant availableAt) {
+    void recordFailure(UUID id, UUID leaseId, Status nextStatus, Instant availableAt, String errorCode) {
         jdbc.update("""
                 UPDATE media_jobs
                 SET status = ?, available_at = ?, lease_id = NULL, lease_expires = NULL,
                     last_error_code = ?, last_failure_lease_id = ?
                 WHERE id = ? AND status = ? AND lease_id = ?
                 """, nextStatus.name(), availableAt == null ? null : availableAt.getEpochSecond(),
-                "INPUT_DOWNLOAD_FAILED", leaseId.toString(), id.toString(), Status.PROCESSING.name(), leaseId.toString());
+                errorCode, leaseId.toString(), id.toString(), Status.PROCESSING.name(), leaseId.toString());
     }
 
     int extendLease(UUID id, UUID leaseId, Instant now, Instant leaseExpiresAt) {
@@ -115,7 +115,7 @@ final class MediaJobRepository {
                 leaseId == null ? null : UUID.fromString(leaseId),
                 leaseExpires == null ? null : Instant.ofEpochSecond(leaseExpires),
                 availableAt == null ? null : Instant.ofEpochSecond(availableAt), rs.getInt("attempt_count"),
-                lastFailureLeaseId == null ? null : UUID.fromString(lastFailureLeaseId),
+                lastFailureLeaseId == null ? null : UUID.fromString(lastFailureLeaseId), rs.getString("last_error_code"),
                 rs.getString("result_par_id"), rs.getString("result_key"), rs.getLong("result_bytes"));
     }
 }

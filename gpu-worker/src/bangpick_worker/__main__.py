@@ -8,7 +8,7 @@ from tempfile import NamedTemporaryFile
 from uuid import UUID
 
 from .transfers import PermanentTransferError, TransferError, Transfers
-from .supervisor import renew_lease, supervise
+from .supervisor import ProcessStartError, renew_lease, supervise
 
 
 def save_lease(path: Path, lease: str) -> None:
@@ -22,14 +22,20 @@ def save_lease(path: Path, lease: str) -> None:
 
 
 def report_input_failure(transfers: Transfers, job_id: str, lease: str, retryable: bool) -> None:
+    report_failure(transfers, job_id, lease, "input-failed", retryable)
+
+
+def report_failure(transfers: Transfers, job_id: str, lease: str, action: str, retryable: bool) -> str:
     try:
-        result = transfers.command(job_id, "input-failed", {"leaseId": lease, "retryable": retryable})
+        result = transfers.command(job_id, action, {"leaseId": lease, "retryable": retryable})
     except TransferError:
-        raise TransferError("Input failed and the backend did not confirm the failure; keep the lease file") from None
+        raise TransferError("The backend did not confirm the failure; keep the lease file") from None
     status = result.get("status")
     if status not in {"QUEUED", "FAILED"}:
         raise TransferError("Backend returned an invalid failure status; keep the lease file")
-    print(f"Job {job_id} is {status} after input failure")
+    stage = "input" if action == "input-failed" else "processing"
+    print(f"Job {job_id} is {status} after {stage} failure")
+    return status
 
 
 def run(args: argparse.Namespace, transfers: Transfers) -> None:
@@ -81,10 +87,18 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
         print(f"Lease for job {job_id} is valid until {expires_at}")
         return
     if args.action == "run-process":
-        result = supervise(job_id, lease, args.work_dir, args.processor, transfers)
+        try:
+            result = supervise(job_id, lease, args.work_dir, args.processor, transfers)
+        except ProcessStartError:
+            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+            raise
         if result != 0:
-            raise TransferError(f"Processing command exited with code {result}; the job remains PROCESSING")
+            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+            raise TransferError(f"Processing command exited with code {result}")
         print(f"Processing command finished for job {job_id}; upload the result separately")
+        return
+    if args.action == "processing-failed":
+        report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
         return
     if args.action == "upload":
         with args.ply.open("rb") as file:
@@ -109,6 +123,7 @@ def main() -> None:
         "download": "Claim the job and download its source video",
         "heartbeat": "Renew the current lease for a job once",
         "run-process": "Run one local command with automatic heartbeats",
+        "processing-failed": "Report a stopped processing attempt without rerunning it",
         "upload": "Upload a local PLY and report completion",
         "complete": "Retry the completion report after an upload succeeded",
     }.items():
@@ -118,6 +133,11 @@ def main() -> None:
         command.add_argument("--work-dir", required=True, type=Path)
         if action == "upload":
             command.add_argument("ply", type=Path)
+        if action in {"run-process", "processing-failed"}:
+            command.add_argument("--retryable", action="store_true",
+                                 help="Retry a failed attempt, up to three total attempts")
+        if action == "run-process":
+            command.epilog = "Put -- before the local processing command."
     argv = sys.argv[1:]
     if argv[:1] == ["run-process"]:
         if "--" not in argv:

@@ -11,6 +11,10 @@ from .transfers import TransferError, Transfers
 HEARTBEAT_INTERVAL_SECONDS = 60
 
 
+class ProcessStartError(TransferError):
+    """The supervised command never started."""
+
+
 def renew_lease(transfers: Transfers, job_id: str, lease: str) -> str:
     renewed = transfers.command(job_id, "heartbeat", {"leaseId": lease})
     expires_at = renewed.get("leaseExpiresAt")
@@ -84,7 +88,7 @@ def supervise(job_id: str, lease: str, work_dir: Path, command: list[str], trans
         try:
             process = subprocess.Popen(command, cwd=job_dir, env=environment)
         except OSError:
-            raise TransferError("Could not start the processing command; the job remains PROCESSING") from None
+            raise ProcessStartError("Could not start the processing command") from None
         try:
             while True:
                 try:

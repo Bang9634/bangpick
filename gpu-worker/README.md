@@ -20,6 +20,7 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 .venv/bin/bangpick-worker download <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker heartbeat <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker run-process <job-id> --work-dir ../outputs/worker -- python /path/to/processor.py
+.venv/bin/bangpick-worker processing-failed <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker upload <job-id> ./room.ply --work-dir ../outputs/worker
 ```
 
@@ -33,7 +34,9 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 
 `run-process`는 이미 다운로드해 점유한 작업에 대해 `--` 뒤의 **신뢰할 수 있는 로컬 명령**을 작업 폴더에서 실행합니다. 실행 직전에 heartbeat를 보내고, 명령이 살아 있는 동안 60초마다 다시 보냅니다. 명령에는 Worker API 토큰을 환경 변수로 전달하지 않습니다. 같은 호스트에서 같은 `--work-dir`를 사용하는 `run-process` 명령은 파일 잠금으로 한 번에 하나만 실행합니다. 처리 명령이 끝나면 감시도 끝나므로 이후 PLY 업로드와 완료 보고는 별도로 실행해야 합니다. 현재 저장소에는 실제 영상 전처리·3DGS 학습 명령이 연결되어 있지 않습니다.
 
-명령이 0이 아닌 코드로 끝나거나 heartbeat가 실패하면 `run-process`도 오류로 종료합니다. heartbeat 실패나 중단 시 직접 실행한 자식 프로세스에 종료를 요청합니다. 그 프로세스가 따로 만든 하위 프로세스의 종료까지 보장하지 않습니다. 이때 백엔드 작업은 즉시 실패 처리되지 않고 `PROCESSING`에 남습니다. 이 로컬 잠금은 다른 작업 디렉터리나 GPU 호스트에서의 중복 실행을 막지 않으며, 백엔드의 전체 GPU 동시 실행 수를 제한하지 않습니다.
+처리 명령을 시작하지 못했거나 0이 아닌 코드로 끝나면 `run-process`가 `processing-failed`를 백엔드에 보고합니다. 기본은 `FAILED`이고, 일시적인 오류임을 알고 있다면 `run-process <job-id> --work-dir ... --retryable -- <명령>`으로 실행해 최대 3회까지 재시도합니다. 첫 실패 후 30초, 두 번째 실패 후 60초가 지나야 다시 선택됩니다. 실패 보고의 응답을 받지 못했다면 **처리 명령이 실제로 멈춘 것을 확인한 뒤** `processing-failed <job-id> --work-dir ...`로 같은 점유 ID의 보고만 재시도할 수 있습니다. 원래 `--retryable`로 실행했다면 이 명령에도 `--retryable`을 붙입니다. 이미 보고된 실패를 같은 종류로 재요청해도 상태는 다시 바뀌지 않습니다.
+
+heartbeat 실패나 중단 시에는 직접 실행한 자식 프로세스에 종료를 요청하지만, 그 프로세스가 따로 만든 하위 프로세스의 종료까지 보장하지 않습니다. 따라서 이 경우 실패를 자동 보고하지 않고 작업은 `PROCESSING`에 남을 수 있습니다. 이 로컬 잠금은 다른 작업 디렉터리나 GPU 호스트에서의 중복 실행을 막지 않으며, 백엔드의 전체 GPU 동시 실행 수를 제한하지 않습니다.
 
 작업 폴더·실제 모델·개발용 토큰을 커밋하지 않습니다. 이미 PLY 업로드가 끝났는데 완료 응답만 실패했다면 `complete <job-id> --work-dir ../outputs/worker`를 실행합니다. PLY 업로드가 실패했다면 `upload`를 재실행해 새 URL을 받습니다.
 
