@@ -21,13 +21,31 @@ def save_lease(path: Path, lease: str) -> None:
 
 
 def run(args: argparse.Namespace, transfers: Transfers) -> None:
-    job_id = str(args.job_id)
-    directory = args.work_dir / job_id
-    lease_file = directory / "lease"
-    lease = str(UUID(lease_file.read_text(encoding="ascii").strip())) if lease_file.exists() else None
-    if args.action == "download":
+    if args.action == "download-next":
+        args.work_dir.mkdir(parents=True, exist_ok=True)
+        next_job = transfers.claim_next()
+        if next_job is None:
+            print("No queued job")
+            return
+        job_id = str(UUID(next_job["jobId"]))
+        lease = str(UUID(next_job["leaseId"]))
+        directory = args.work_dir / job_id
+        directory.mkdir(parents=True, exist_ok=True)
+        lease_file = directory / "lease"
+        # 점유가 이미 시작됐으므로 후속 API나 다운로드가 실패해도 ID를 잃지 않도록 먼저 기록한다.
+        save_lease(lease_file, lease)
+        print(f"Claimed job {job_id}")
+    else:
+        job_id = str(args.job_id)
+        directory = args.work_dir / job_id
+        lease_file = directory / "lease"
+        lease = str(UUID(lease_file.read_text(encoding="ascii").strip())) if lease_file.exists() else None
+    if args.action in {"download", "download-next"}:
         claim = transfers.command(job_id, "claim", {"leaseId": lease})
-        lease = str(UUID(claim["leaseId"]))
+        claimed_lease = str(UUID(claim["leaseId"]))
+        if args.action == "download-next" and claimed_lease != lease:
+            raise TransferError("Backend returned a different lease for the queued job")
+        lease = claimed_lease
         extension = claim["extension"]
         if extension not in {".mp4", ".mov", ".webm"}:
             raise TransferError("Backend returned an unsupported video extension")
@@ -59,12 +77,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     for action, help_text in {
+        "download-next": "Claim the next queued job and download its source video",
         "download": "Claim the job and download its source video",
         "upload": "Upload a local PLY and report completion",
         "complete": "Retry the completion report after an upload succeeded",
     }.items():
         command = commands.add_parser(action, help=help_text)
-        command.add_argument("job_id", type=UUID)
+        if action != "download-next":
+            command.add_argument("job_id", type=UUID)
         command.add_argument("--work-dir", required=True, type=Path)
         if action == "upload":
             command.add_argument("ply", type=Path)

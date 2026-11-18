@@ -43,6 +43,26 @@ class Transfers:
         self.token = token
         self.opener = build_opener(NoRedirect())
 
+    def claim_next(self) -> dict | None:
+        request = Request(
+            f"{self.api}/internal/media/jobs/claim-next",
+            method="POST",
+            data=b"",
+            headers={"Authorization": f"Bearer {self.token}"},
+        )
+        with self._open(request, "Backend", 45) as response:
+            if response.status == 204:
+                return None
+            if response.status != 200:
+                raise TransferError("Backend returned an unexpected response")
+            try:
+                result = json.load(response)
+            except ValueError:
+                raise TransferError("Backend returned an invalid response") from None
+        if not isinstance(result, dict):
+            raise TransferError("Backend returned an invalid response")
+        return result
+
     def command(self, job_id: str, action: str, payload: dict) -> dict:
         request = Request(
             f"{self.api}/internal/media/jobs/{job_id}/{action}",
