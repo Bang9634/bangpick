@@ -39,9 +39,15 @@ final class MediaJobRepository {
                 inputGrantId, uploadExpiresAt.getEpochSecond());
     }
 
-    void markInputQueued(UUID id) {
-        jdbc.update("UPDATE media_jobs SET status = ?, input_par_id = NULL WHERE id = ?",
-                Status.QUEUED.name(), id.toString());
+    void markInputQueued(UUID id, Instant queuedAt) {
+        long seconds = queuedAt.getEpochSecond();
+
+        jdbc.update("""
+                UPDATE media_jobs
+                SET status = ?, input_par_id = NULL,
+                    queued_at = ?, available_at = ?
+                WHERE id = ?
+                """, Status.QUEUED.name(), seconds, seconds, id.toString());
     }
 
     void assignLease(UUID id, UUID leaseId, Instant leaseExpiresAt) {

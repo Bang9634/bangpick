@@ -103,6 +103,10 @@ class MediaTransferTests {
         storage.put(inputWrite, 123);
         assertThat(body(send(200, ownerPath + "/input-complete", OWNER, Map.of())).path("status").asText())
                 .isEqualTo("QUEUED");
+        Long queuedAt = jdbc.queryForObject("SELECT queued_at FROM media_jobs WHERE id = ?", Long.class, id);
+        Long availableAt = jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id);
+        assertThat(queuedAt).isPositive();
+        assertThat(availableAt).isEqualTo(queuedAt);
         assertThat(storage.permissions(inputWrite)).isNull();
         assertThat(body(send(200, ownerPath + "/input-complete", OWNER, Map.of())).path("status").asText())
                 .isEqualTo("QUEUED");

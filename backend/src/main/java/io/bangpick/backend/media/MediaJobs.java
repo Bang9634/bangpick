@@ -64,7 +64,7 @@ class MediaJobs {
         // 크기 확인 이후 같은 링크로 새 PUT 요청을 보낼 수 없도록 먼저 쓰기 권한을 회수한다.
         storage.revoke(job.inputGrantId());
         verifySize(inputKey(id, job.videoType()), job.videoBytes());
-        repository.markInputQueued(id);
+        repository.markInputQueued(id, Instant.now());
         return new JobView(id, Status.QUEUED);
     }
 
