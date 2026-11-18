@@ -164,7 +164,7 @@ class MediaTransferTests {
     }
 
     @Test
-    void reclaimingAnExpiredLeaseDiscardsThePreviousResultGrant() throws Exception {
+    void expiredProcessingLeaseCannotBeReclaimedWithoutRecovery() throws Exception {
         var started = body(send(200, "/media/jobs", OWNER, Map.of("sizeBytes", 30, "contentType", "video/mp4")));
         String id = started.path("jobId").asString();
         String ownerPath = "/media/jobs/" + id;
@@ -179,12 +179,19 @@ class MediaTransferTests {
         jdbc.update("UPDATE media_jobs SET lease_expires = ? WHERE id = ?", 0L, id);
         send(409, workerPath + "/input-failed", WORKER,
                 Map.of("leaseId", previousLease, "retryable", true));
-
-        String newLease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asString();
-        assertThat(newLease).isNotEqualTo(previousLease);
-        assertThat(storage.permissions(previousResultUrl)).isNull();
+        send(409, workerPath + "/claim", WORKER, Map.of());
+        send(409, workerPath + "/claim", WORKER, Map.of("leaseId", previousLease));
+        send(409, workerPath + "/claim", WORKER,
+                Map.of("leaseId", UUID.randomUUID().toString()));
         send(409, workerPath + "/result-complete", WORKER, Map.of("leaseId", previousLease));
-        send(409, workerPath + "/result-complete", WORKER, Map.of("leaseId", newLease));
+        assertThat(jdbc.queryForObject("SELECT status FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("PROCESSING");
+        assertThat(jdbc.queryForObject("SELECT lease_id FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo(previousLease);
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT result_key FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo(storage.permissions(previousResultUrl).key());
         send(409, ownerPath + "/preview", OWNER, Map.of());
     }
 

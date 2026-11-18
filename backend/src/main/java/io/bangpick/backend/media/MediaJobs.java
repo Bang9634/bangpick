@@ -106,12 +106,15 @@ class MediaJobs {
             requireLease(job, currentLease);
             return inputGrant(job, currentLease, job.leaseExpiresAt(), now);
         }
-        if (job.status() != Status.QUEUED && job.status() != Status.PROCESSING) {
+        // 점유 만료는 이전 실행의 중단을 증명하지 않으므로 별도 복구 전에는 다시 점유하지 않는다.
+        if (job.status() == Status.PROCESSING) {
+            throw conflict("Expired processing job requires recovery before a new claim");
+        }
+        if (job.status() != Status.QUEUED) {
             throw conflict("The job cannot be claimed");
         }
         if (job.attemptCount() >= MAX_ATTEMPTS) throw conflict("The job has reached its attempt limit");
-        if (job.status() == Status.QUEUED &&
-                (job.availableAt() == null || job.availableAt().isAfter(now))) {
+        if (job.availableAt() == null || job.availableAt().isAfter(now)) {
             throw conflict("The job is not yet available");
         }
         storage.revoke(job.resultGrantId());
