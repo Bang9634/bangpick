@@ -1,0 +1,52 @@
+digraph WorkerQueueFlow {
+  graph [layout=neato, overlap=true, splines=line, outputorder=edgesfirst,
+    bgcolor="white", pad=0.28, labelloc=t, labeljust=l, fontcolor="#0f172a",
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2">
+      <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="25">bangpick | 재구성 작업 큐</FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="14" COLOR="#475569">첫 통합 제안 · 유휴 Worker가 작업 한 건씩 요청</FONT></TD></TR>
+    </TABLE>>];
+
+  // 같은 열에 참여자와 화살표 끝점을 배치하고, 시간은 위에서 아래로 흐릅니다.
+  node [shape=point, width=0.018, height=0.018, label="", style=invis];
+  edge [color="#cbd5e1", style=dashed, dir=none];
+  worker_top [pos="1.25,8.72!"]; worker_end [pos="1.25,1.13!"]; worker_top -> worker_end;
+  backend_top [pos="5,8.72!"]; backend_end [pos="5,1.13!"]; backend_top -> backend_end;
+  oci_top [pos="8.55,8.72!"]; oci_end [pos="8.55,1.13!"]; oci_top -> oci_end;
+
+  edge [color="#64748b", style=solid, dir=forward, penwidth=1.35, arrowsize=0.78];
+  w1 [pos="1.25,7.54!"]; b1 [pos="5,7.54!"]; w1 -> b1 [color="#2563eb", penwidth=2];
+  b2 [pos="5,6.82!"]; w2 [pos="1.25,6.82!"]; b2 -> w2 [color="#2563eb", penwidth=2];
+  w3 [pos="1.25,6.21!"]; b3 [pos="5,6.21!"]; w3 -> b3;
+  b4 [pos="5,5.69!"]; w4 [pos="1.25,5.69!"]; b4 -> w4;
+  o5 [pos="8.55,5.09!"]; w5 [pos="1.25,5.09!"]; o5 -> w5 [color="#047857", penwidth=2.8];
+  w6 [pos="1.25,3.97!"]; b6 [pos="5,3.97!"]; w6 -> b6;
+  b7 [pos="5,3.45!"]; w7 [pos="1.25,3.45!"]; b7 -> w7;
+  w8 [pos="1.25,2.85!"]; o8 [pos="8.55,2.85!"]; w8 -> o8 [color="#047857", penwidth=2.8];
+  w9 [pos="1.25,2.24!"]; b9 [pos="5,2.24!"]; w9 -> b9;
+
+  node [shape=box, width=0, height=0, style="rounded,filled",
+    fontcolor="#0f172a", margin="0.18,0.10", penwidth=1.2, fontsize=15];
+  worker [pos="1.25,8.93!", label="GPU Worker", fillcolor="#faf5ff", color="#c084fc"];
+  backend [pos="5,8.93!", label="백엔드 · MySQL", fillcolor="#f0fdfa", color="#2dd4bf"];
+  oci [pos="8.55,8.93!", label="OCI Object Storage", fillcolor="#fff7ed", color="#fb923c"];
+
+  node [fontsize=13, margin="0.13,0.07", fillcolor="#f8fafc", color="#cbd5e1"];
+  queued [pos="5,8.30!", label="영상 업로드 확인\nQUEUED · 대기 중"];
+  lease [pos="5,7.25!", label="PROCESSING · 점유 부여", fillcolor="#eff6ff", color="#93c5fd"];
+  empty [pos="7.58,7.25!", label="배정할 작업이 없으면 204\nWorker는 기다렸다가 다시 요청", fillcolor="#eff6ff", color="#93c5fd"];
+  train [pos="1.25,4.53!", label="받은 작업 한 건 재구성", fillcolor="#faf5ff", color="#d8b4fe"];
+  ready [pos="5,1.69!", label="PLY 저장 확인\nRESULT_READY", fillcolor="#f0fdfa", color="#5eead4"];
+
+  node [style=filled, fillcolor="white", color="white", margin="0.05,0.015", fontsize=13];
+  claim_label [pos="3.13,7.73!", label="claim-next · 다음 작업 요청", fontcolor="#1d4ed8"];
+  reply_label [pos="2.84,7.01!", label="200 · 작업과 점유 정보", fontcolor="#1d4ed8"];
+  read_label [pos="3.13,6.42!", label="claim · 기존 점유로 읽기 URL 요청"];
+  read_reply [pos="3.13,5.89!", label="원본 읽기 URL 반환"];
+  get_label [pos="4.89,5.30!", label="GET · OCI 원본 영상", fontcolor="#047857"];
+  write_label [pos="3.13,4.19!", label="result-upload · PLY 쓰기 URL 요청"];
+  write_reply [pos="3.13,3.65!", label="결과 쓰기 URL 반환"];
+  put_label [pos="4.89,3.06!", label="PUT · 결과 PLY", fontcolor="#047857"];
+  finish_label [pos="3.13,2.45!", label="result-complete · 업로드 완료 보고"];
+  legend [pos="4.89,0.86!", fontsize=12, fontcolor="#475569",
+    label="파란색 · 새 작업 배정 API     초록색 · 실제 파일 이동"];
+}
