@@ -45,7 +45,7 @@ class DownloadNextTests(unittest.TestCase):
 
         with TemporaryDirectory() as temporary:
             run(Namespace(action="download-next", work_dir=Path(temporary)), EmptyBackend())
-            self.assertEqual(list(Path(temporary).iterdir()), [])
+            self.assertEqual([path for path in Path(temporary).iterdir() if path.is_dir()], [])
 
     def test_download_next_keeps_lease_when_input_url_request_fails(self):
         job_id = uuid4()

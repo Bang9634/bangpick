@@ -7,8 +7,8 @@ import sys
 from tempfile import NamedTemporaryFile
 from uuid import UUID
 
-from .transfers import PermanentTransferError, TransferError, Transfers
-from .supervisor import ProcessStartError, renew_lease, supervise
+from .transfers import CHUNK_SIZE, PermanentTransferError, TransferError, Transfers
+from .supervisor import ProcessStartError, local_processing_slot, renew_lease, supervise, supervise_in_slot
 
 
 def save_lease(path: Path, lease: str) -> None:
@@ -38,47 +38,124 @@ def report_failure(transfers: Transfers, job_id: str, lease: str, action: str, r
     return status
 
 
-def run(args: argparse.Namespace, transfers: Transfers) -> None:
-    if args.action == "download-next":
-        args.work_dir.mkdir(parents=True, exist_ok=True)
-        next_job = transfers.claim_next()
-        if next_job is None:
-            print("No queued job")
-            return
-        job_id = str(UUID(next_job["jobId"]))
-        lease = str(UUID(next_job["leaseId"]))
-        directory = args.work_dir / job_id
+def download_assigned(job_id: str, lease: str | None, directory: Path, transfers: Transfers,
+                      report_failure_on_error: bool) -> tuple[str, Path]:
+    lease_file = directory / "lease"
+    try:
+        claim = transfers.command(job_id, "claim", {"leaseId": lease})
+        claimed_lease = str(UUID(claim["leaseId"]))
+        if report_failure_on_error and claimed_lease != lease:
+            raise PermanentTransferError("Backend returned a different lease for the queued job")
+        lease = claimed_lease
+        extension = claim["extension"]
+        if extension not in {".mp4", ".mov", ".webm"}:
+            raise PermanentTransferError("Backend returned an unsupported video extension")
         directory.mkdir(parents=True, exist_ok=True)
-        lease_file = directory / "lease"
-        # 점유가 이미 시작됐으므로 후속 API나 다운로드가 실패해도 ID를 잃지 않도록 먼저 기록한다.
+        # 백엔드는 이미 점유를 부여했다. 다운로드 실패 후에도 같은 점유로 재시도할 수 있게 저장한다.
         save_lease(lease_file, lease)
-        print(f"Claimed job {job_id}")
-    else:
-        job_id = str(args.job_id)
-        directory = args.work_dir / job_id
-        lease_file = directory / "lease"
-        lease = str(UUID(lease_file.read_text(encoding="ascii").strip())) if lease_file.exists() else None
-    if args.action in {"download", "download-next"}:
+        target = directory / ("source" + extension)
+        transfers.download(claim["transfer"], target)
+    except (TransferError, OSError, ValueError, TypeError, AttributeError, KeyError) as error:
+        if report_failure_on_error:
+            retryable = isinstance(error, (TransferError, OSError)) and not isinstance(error, PermanentTransferError)
+            report_input_failure(transfers, job_id, lease, retryable)
+        raise
+    print(f"Source saved to {target}")
+    return lease, target
+
+
+def download_next_job(work_dir: Path, transfers: Transfers) -> tuple[str, str, Path] | None:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    next_job = transfers.claim_next()
+    if next_job is None:
+        print("No queued job")
+        return None
+    job_id = str(UUID(next_job["jobId"]))
+    lease = str(UUID(next_job["leaseId"]))
+    directory = work_dir / job_id
+    directory.mkdir(parents=True, exist_ok=True)
+    # 점유가 이미 시작됐으므로 후속 API나 다운로드가 실패해도 ID를 잃지 않도록 먼저 기록한다.
+    save_lease(directory / "lease", lease)
+    print(f"Claimed job {job_id}")
+    lease, source = download_assigned(job_id, lease, directory, transfers, True)
+    return job_id, lease, source
+
+
+def validate_ply(ply: Path) -> int:
+    if ply.suffix.lower() != ".ply" or not ply.is_file():
+        raise TransferError("The result must be a PLY file")
+    size = ply.stat().st_size
+    if not 0 < size <= 256 * CHUNK_SIZE:
+        raise TransferError("The PLY is empty or exceeds the size limit")
+    with ply.open("rb") as file:
+        if file.readline(8).strip() != b"ply":
+            raise TransferError("The result must be a PLY file")
+    return size
+
+
+def upload_ply(job_id: str, lease: str, ply: Path, transfers: Transfers) -> None:
+    grant = transfers.command(job_id, "result-upload", {
+        "leaseId": lease, "sizeBytes": validate_ply(ply),
+    })
+    transfers.upload(grant, ply)
+
+
+def complete_result(job_id: str, lease: str, transfers: Transfers) -> None:
+    completed = transfers.command(job_id, "result-complete", {"leaseId": lease})
+    if completed.get("status") != "RESULT_READY":
+        raise TransferError("The backend did not confirm the result")
+    print(f"Result recorded for job {job_id}")
+
+
+def process_next(args: argparse.Namespace, transfers: Transfers) -> None:
+    if not args.processor:
+        raise TransferError("Specify a processing command before claiming a job")
+    with local_processing_slot(args.work_dir):
+        claimed = download_next_job(args.work_dir, transfers)
+        if claimed is None:
+            return
+        job_id, lease, source = claimed
+        output = args.work_dir / job_id / "attempts" / lease / "room.ply"
         try:
-            claim = transfers.command(job_id, "claim", {"leaseId": lease})
-            claimed_lease = str(UUID(claim["leaseId"]))
-            if args.action == "download-next" and claimed_lease != lease:
-                raise PermanentTransferError("Backend returned a different lease for the queued job")
-            lease = claimed_lease
-            extension = claim["extension"]
-            if extension not in {".mp4", ".mov", ".webm"}:
-                raise PermanentTransferError("Backend returned an unsupported video extension")
-            directory.mkdir(parents=True, exist_ok=True)
-            # 백엔드는 이미 점유를 부여했다. 다운로드가 실패해도 같은 점유로 재시도할 수 있게 먼저 저장한다.
-            save_lease(lease_file, lease)
-            target = directory / ("source" + extension)
-            transfers.download(claim["transfer"], target)
-        except (TransferError, OSError, ValueError, TypeError, AttributeError, KeyError) as error:
-            if args.action == "download-next":
-                retryable = isinstance(error, (TransferError, OSError)) and not isinstance(error, PermanentTransferError)
-                report_input_failure(transfers, job_id, lease, retryable)
+            result = supervise_in_slot(job_id, lease, args.work_dir, args.processor, transfers,
+                                       input_video=source, output_ply=output)
+        except ProcessStartError:
+            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
             raise
-        print(f"Source saved to {target}")
+        if result != 0:
+            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+            raise TransferError(f"Processing command exited with code {result}")
+        try:
+            validate_ply(output)
+        except (TransferError, OSError):
+            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+            raise
+        try:
+            upload_ply(job_id, lease, output, transfers)
+        except (TransferError, OSError):
+            raise TransferError(f"Result upload for job {job_id} was not confirmed; retry upload using {output}") from None
+        try:
+            complete_result(job_id, lease, transfers)
+        except TransferError:
+            raise TransferError(f"Completion for job {job_id} was not confirmed; retry complete") from None
+
+
+def run(args: argparse.Namespace, transfers: Transfers) -> None:
+    if args.action == "process-next":
+        process_next(args, transfers)
+        return
+    if args.action == "download-next":
+        with local_processing_slot(args.work_dir):
+            download_next_job(args.work_dir, transfers)
+        return
+
+    job_id = str(args.job_id)
+    directory = args.work_dir / job_id
+    lease_file = directory / "lease"
+    lease = str(UUID(lease_file.read_text(encoding="ascii").strip())) if lease_file.exists() else None
+    if args.action == "download":
+        with local_processing_slot(args.work_dir):
+            download_assigned(job_id, lease, directory, transfers, False)
         return
     if not lease:
         raise TransferError("Run download for this job first")
@@ -98,21 +175,14 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
         print(f"Processing command finished for job {job_id}; upload the result separately")
         return
     if args.action == "processing-failed":
-        report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+        with local_processing_slot(args.work_dir):
+            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
         return
-    if args.action == "upload":
-        with args.ply.open("rb") as file:
-            if args.ply.suffix.lower() != ".ply" or file.readline(8).strip() != b"ply":
-                raise TransferError("The result must be a PLY file")
-        grant = transfers.command(job_id, "result-upload", {
-            "leaseId": lease, "sizeBytes": args.ply.stat().st_size,
-        })
-        transfers.upload(grant, args.ply)
-    # 파일 업로드 후 완료 보고가 실패하면 complete 명령으로 이 요청만 재시도한다.
-    completed = transfers.command(job_id, "result-complete", {"leaseId": lease})
-    if completed.get("status") != "RESULT_READY":
-        raise TransferError("The backend did not confirm the result")
-    print(f"Result recorded for job {job_id}")
+    with local_processing_slot(args.work_dir):
+        if args.action == "upload":
+            upload_ply(job_id, lease, args.ply, transfers)
+        # 파일 업로드 후 완료 보고가 실패하면 complete 명령으로 이 요청만 재시도한다.
+        complete_result(job_id, lease, transfers)
 
 
 def main() -> None:
@@ -120,6 +190,7 @@ def main() -> None:
     commands = parser.add_subparsers(dest="action", required=True)
     for action, help_text in {
         "download-next": "Claim the next queued job and download its source video",
+        "process-next": "Claim, process and upload one queued job",
         "download": "Claim the job and download its source video",
         "heartbeat": "Renew the current lease for a job once",
         "run-process": "Run one local command with automatic heartbeats",
@@ -128,27 +199,27 @@ def main() -> None:
         "complete": "Retry the completion report after an upload succeeded",
     }.items():
         command = commands.add_parser(action, help=help_text)
-        if action != "download-next":
+        if action not in {"download-next", "process-next"}:
             command.add_argument("job_id", type=UUID)
         command.add_argument("--work-dir", required=True, type=Path)
         if action == "upload":
             command.add_argument("ply", type=Path)
-        if action in {"run-process", "processing-failed"}:
+        if action in {"run-process", "process-next", "processing-failed"}:
             command.add_argument("--retryable", action="store_true",
                                  help="Retry a failed attempt, up to three total attempts")
-        if action == "run-process":
+        if action in {"run-process", "process-next"}:
             command.epilog = "Put -- before the local processing command."
     argv = sys.argv[1:]
-    if argv[:1] == ["run-process"]:
+    if argv[:1] in (["run-process"], ["process-next"]):
         if "--" not in argv:
             if "-h" in argv or "--help" in argv:
                 parser.parse_args(argv)
-            parser.error("run-process requires -- before the processing command")
+            parser.error(f"{argv[0]} requires -- before the processing command")
         separator = argv.index("--")
         args = parser.parse_args(argv[:separator])
         args.processor = argv[separator + 1:]
         if not args.processor:
-            parser.error("run-process requires a processing command after --")
+            parser.error(f"{argv[0]} requires a processing command after --")
     else:
         args = parser.parse_args(argv)
     try:
