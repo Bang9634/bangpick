@@ -31,6 +31,12 @@ URL이 로컬 `bangpick_queue_test` DB를 가리키지 않으면 테스트는 �
 
 복구 테스트는 테스트 DB의 `lease_expires`를 과거로 바꿔 만료를 재현합니다. 실제 운영에서 이 값을 변경하는 절차가 아닙니다. 백엔드는 GPU 프로세스의 종료를 판별하지 않으므로 운영자가 이전 실행의 종료를 확인해야 합니다.
 
+## 로컬 API·Worker 전송 통합 테스트
+
+`BANGPICK_WORKER_E2E_PYTHON`에 Python 3.11 이상 실행 파일의 경로를 지정한 뒤 `backend/`에서 `./mvnw -Dtest=MediaWorkerLocalFlowTests test`를 실행합니다. Windows에서는 `.\mvnw.cmd`를 사용합니다. 변수 설정이 없으면 이 테스트는 건너뜁니다.
+
+테스트는 임시 H2 DB와 실행 중에 생성한 인증서를 사용하는 로컬 HTTPS 저장소를 띄웁니다. 합성 입력 바이트를 업로드한 뒤 실제 백엔드 API와 `process-next` 명령으로 작업을 처리하고, 결과 조회 URL에서 테스트용 PLY 바이트를 확인합니다. 영상 디코딩·PLY 렌더링·OCI 버킷·GPU 학습은 검증하지 않습니다. 인증서와 작업 파일은 테스트 종료 시 삭제합니다.
+
 ## OCI 파일 전송 개발 환경
 
 1. 저장소 루트에서 `docker compose up -d db`로 로컬 MySQL을 실행합니다. 기존 DB를 사용할 경우 아래의 DB 변수만 바꿉니다.
