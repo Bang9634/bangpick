@@ -31,7 +31,11 @@ final class MediaJobRepository {
         return queryJob(SELECT_BY_ID + "FOR UPDATE", id);
     }
 
-    // 호출자의 트랜잭션 안에서 선택한 행을 잠가 다른 Worker의 중복 점유를 막는다.
+    /**
+     * 실행 가능한 행을 대기 시각·ID 순으로 잠근다. 이미 잠긴 행은 건너뛰므로
+     * 동시 요청 간 절대적인 FIFO 순서를 보장하지 않는다. 호출자는 점유 기록까지
+     * 같은 짧은 트랜잭션에서 끝내야 중복 점유를 막을 수 있다.
+     */
     Optional<UUID> findNextQueuedForUpdate(Instant now, int maxAttempts) {
         return jdbc.query("""
                 SELECT id FROM media_jobs
@@ -81,6 +85,7 @@ final class MediaJobRepository {
                 errorCode, leaseId.toString(), id.toString(), Status.PROCESSING.name(), leaseId.toString());
     }
 
+    /** 조회 후 점유가 바뀌었거나 만료 조건이 달라진 행에는 복구를 적용하지 않는다. */
     int recordExpiredRecovery(UUID id, UUID leaseId, Instant now, Status nextStatus, Instant availableAt) {
         return jdbc.update("""
                 UPDATE media_jobs

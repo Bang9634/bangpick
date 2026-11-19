@@ -86,6 +86,7 @@ class MediaJobs {
         return grant(job.resultKey(), READ, Instant.now().plus(READ_GRANT_DURATION), job.resultBytes());
     }
 
+    /** 작업 한 건을 점유하고 ID를 반환한다. 점유는 GPU 실행 시작이나 전역 GPU 용량 확보를 뜻하지 않는다. */
     @Transactional
     public Optional<NextClaim> claimNext() {
         Instant now = Instant.now();
@@ -125,6 +126,7 @@ class MediaJobs {
         return response;
     }
 
+    /** 현재 유효한 점유만 갱신한다. 만료된 점유는 되살리지 않고, 만료 시각을 앞당기거나 시도 횟수를 늘리지 않는다. */
     @Transactional
     public LeaseHeartbeat heartbeat(UUID id, UUID lease) {
         MediaJob job = loadForUpdate(id);
@@ -149,9 +151,13 @@ class MediaJobs {
         return failAttempt(id, lease, retryable, "PROCESSING_FAILED");
     }
 
+    /**
+     * 운영자가 이전 실행의 종료를 확인한 만료 점유만 복구한다. 백엔드는 확인 선언을
+     * 검사하지만 GPU 프로세스 종료를 직접 검증하지 않는다. 기존 결과 쓰기 권한과
+     * 결과 키 참조를 정리하며, 저장된 결과 객체 자체는 삭제하지 않는다.
+     */
     @Transactional
     public JobView recoverExpired(UUID id, UUID lease, Boolean previousExecutionStopped, Boolean retryable) {
-        // 운영자 확인 선언이다. 백엔드는 외부 GPU 실행의 종료 여부를 직접 증명하지 못한다.
         if (!Boolean.TRUE.equals(previousExecutionStopped)) {
             throw new ResponseStatusException(BAD_REQUEST, "Confirm the previous execution has stopped");
         }
@@ -176,6 +182,10 @@ class MediaJobs {
         return new JobView(id, next);
     }
 
+    /**
+     * 현재 점유의 결과 업로드 전 실패만 기록한다. 같은 점유·오류 종류의 재보고는
+     * 기존 상태를 반환하고, 재시도는 남은 시도가 있을 때 available_at 이후로 미룬다.
+     */
     private JobView failAttempt(UUID id, UUID lease, Boolean retryable, String errorCode) {
         if (retryable == null) throw new ResponseStatusException(BAD_REQUEST, "Specify whether the failure is retryable");
         MediaJob job = loadForUpdate(id);
@@ -218,7 +228,7 @@ class MediaJobs {
     public JobView finishResult(UUID id, UUID lease) {
         MediaJob job = loadForUpdate(id);
         requireLease(job, lease);
-        // 완료 응답을 못 받은 Worker는 점유가 만료된 뒤에도 완료 확인만 재시도할 수 있다.
+        // 이미 완료된 동일 점유의 응답만 만료 후 재확인할 수 있다. 미완료 작업에는 유효한 점유가 필요하다.
         if (job.status() == Status.RESULT_READY) return view(job);
         requireActiveLease(job);
         if (job.resultGrantId() == null) throw conflict("Request a result upload grant first");

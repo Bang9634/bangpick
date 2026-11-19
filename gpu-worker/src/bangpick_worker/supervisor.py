@@ -1,4 +1,4 @@
-"""Run one local processing command while its backend lease remains active."""
+"""Supervise a local child process and attempt to renew its backend lease."""
 
 from contextlib import contextmanager
 from datetime import datetime
@@ -31,7 +31,10 @@ def renew_lease(transfers: Transfers, job_id: str, lease: str) -> str:
 
 @contextmanager
 def local_processing_slot(work_dir: Path):
-    """Allow one supervised processing command per work directory on this host."""
+    """잠금을 획득한 명령만 같은 호스트·작업 디렉터리에서 직렬화한다.
+
+    단발 heartbeat 등 잠금을 사용하지 않는 호출과 전역 GPU 실행 수는 제한하지 않는다.
+    """
     work_dir.mkdir(parents=True, exist_ok=True)
     with (work_dir / ".processing.lock").open("a+b") as lock_file:
         lock_file.seek(0, os.SEEK_END)
@@ -92,7 +95,11 @@ def supervise(job_id: str, lease: str, work_dir: Path, command: list[str], trans
 def supervise_in_slot(job_id: str, lease: str, work_dir: Path, command: list[str], transfers: Transfers,
                       heartbeat_interval: float = HEARTBEAT_INTERVAL_SECONDS, *,
                       input_video: Path | None = None, output_ply: Path | None = None) -> int:
-    """Run a command while the caller holds local_processing_slot(work_dir)."""
+    """호출자가 local_processing_slot을 보유한 상태에서 명령과 heartbeat를 감시한다.
+
+    실행 중 오류가 나면 직접 실행한 자식 프로세스의 종료를 요청한다.
+    그 프로세스가 만든 다른 프로세스의 종료는 보장하지 않는다.
+    """
     job_dir = _job_directory(job_id, work_dir, command, heartbeat_interval)
     if (input_video is None) != (output_ply is None):
         raise TransferError("Specify both processing input and output paths")

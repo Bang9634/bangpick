@@ -11,6 +11,6 @@ interface MediaStorage {
 
     Grant grant(String key, Access access, Instant expiresAt);
     long size(String key);
-    // 완료 확인을 재시도할 수 있도록 이미 회수된 권한에 대한 요청도 성공으로 취급한다.
+    /** 권한 ID가 없거나 이미 회수됐으면 성공으로 취급해 완료·복구 요청의 재시도를 허용한다. */
     void revoke(String grantId);
 }
