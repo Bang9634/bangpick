@@ -5,6 +5,7 @@ import com.oracle.bmc.auth.ConfigFileAuthenticationDetailsProvider;
 import com.oracle.bmc.objectstorage.ObjectStorageClient;
 import com.oracle.bmc.retrier.RetryConfiguration;
 import java.io.IOException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -24,8 +25,8 @@ class MediaConfiguration {
     }
 
     @Bean
-    MediaAccess mediaAccess(Settings settings) {
-        return new MediaAccess(settings.devToken(), settings.workerToken());
+    MediaAccess mediaAccess(Settings settings, @Value("${bangpick.auth.enabled:false}") boolean memberLoginEnabled) {
+        return new MediaAccess(memberLoginEnabled, settings.devToken(), settings.workerToken());
     }
 
     @Bean

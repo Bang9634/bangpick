@@ -1,11 +1,15 @@
+import { csrfHeaders } from '../auth/api'
+
 export type Transfer = { url: string; method: 'GET' | 'PUT'; expiresAt: string; sizeBytes: number }
 export type Job = { jobId: string; status: 'UPLOADING' | 'QUEUED' | 'PROCESSING' | 'RESULT_READY' }
 type Started = { jobId: string; transfer: Transfer }
 type MediaRequest = { method?: 'GET' | 'POST'; payload?: object; signal?: AbortSignal }
 
-async function requestMedia<T>(token: string, path: string,
+async function requestMedia<T>(token: string | null, path: string,
   { method = 'GET', payload, signal }: MediaRequest = {}): Promise<T> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${token.trim()}` }
+  const headers: Record<string, string> = token !== null
+    ? { Authorization: `Bearer ${token.trim()}` }
+    : method === 'POST' ? await csrfHeaders(signal) : {}
   if (payload) headers['Content-Type'] = 'application/json'
   const response = await fetch(`/api/media/jobs${path}`, {
     method,
@@ -15,7 +19,7 @@ async function requestMedia<T>(token: string, path: string,
   if (!response.ok) {
     const messages: Record<number, string> = {
       400: '입력 형식 또는 파일 크기를 확인하세요.',
-      401: '개발 접근 토큰을 확인하세요.',
+      401: token === null ? '다시 로그인하세요.' : '개발 접근 토큰을 확인하세요.',
       404: '작업을 찾을 수 없거나 백엔드의 파일 전송 기능이 꺼져 있습니다.',
       409: '작업 상태나 업로드된 파일을 확인하세요. 업로드가 만료됐다면 다시 시작하세요.',
       502: '스토리지 요청에 실패했습니다. 백엔드의 OCI 설정과 권한을 확인하세요.',
@@ -35,7 +39,7 @@ function videoContentType(file: File): string {
 }
 
 // 저장 확인만 실패했을 때 영상을 다시 보내지 않고 확인 요청만 재시도할 수 있다.
-export async function uploadSourceVideo(token: string, file: File, signal?: AbortSignal): Promise<string> {
+export async function uploadSourceVideo(token: string | null, file: File, signal?: AbortSignal): Promise<string> {
   const { jobId, transfer } = await requestMedia<Started>(token, '', {
     method: 'POST', payload: { sizeBytes: file.size, contentType: videoContentType(file) }, signal,
   })
@@ -43,15 +47,15 @@ export async function uploadSourceVideo(token: string, file: File, signal?: Abor
   return jobId
 }
 
-export function confirmVideoUpload(token: string, jobId: string, signal?: AbortSignal): Promise<Job> {
+export function confirmVideoUpload(token: string | null, jobId: string, signal?: AbortSignal): Promise<Job> {
   return requestMedia(token, `/${encodeURIComponent(jobId)}/input-complete`, { method: 'POST', signal })
 }
 
-export function getMediaJob(token: string, jobId: string, signal?: AbortSignal): Promise<Job> {
+export function getMediaJob(token: string | null, jobId: string, signal?: AbortSignal): Promise<Job> {
   return requestMedia(token, `/${encodeURIComponent(jobId)}`, { signal })
 }
 
-export function requestResultPreview(token: string, jobId: string, signal?: AbortSignal): Promise<Transfer> {
+export function requestResultPreview(token: string | null, jobId: string, signal?: AbortSignal): Promise<Transfer> {
   return requestMedia(token, `/${encodeURIComponent(jobId)}/preview`, { method: 'POST', signal })
 }
 
