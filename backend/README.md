@@ -9,9 +9,9 @@ Java 21과 Maven Wrapper로 실행합니다. Windows에서는 `mvnw.cmd`를 사�
 
 개별 실행 시 기본 DB는 `localhost:13306/bangpick`입니다. `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`는 셸·IDE 환경에서 지정하세요. JVM은 저장소 루트의 `.env`를 자동으로 읽지 않습니다. DB는 [인프라 안내](../infra/README.md)대로 기동하며, 상태는 `http://127.0.0.1:8080/api/actuator/health`에서 확인합니다.
 
-## MySQL 대기열 동시성 테스트
+## MySQL 작업 대기열 테스트
 
-기본 `verify`는 H2 기반 테스트를 실행합니다. 실제 MySQL의 `FOR UPDATE SKIP LOCKED` 동작은 별도의 로컬 `bangpick_queue_test` DB에서만 테스트합니다. 테스트는 Flyway 마이그레이션을 적용하고 자신이 만든 작업 행을 삭제합니다. 개발용 `bangpick` DB나 공유 DB를 테스트 URL로 지정하지 마세요.
+기본 `verify`는 H2 기반 테스트를 실행합니다. 실제 MySQL의 `FOR UPDATE SKIP LOCKED`와 만료 작업 수동 복구는 별도의 로컬 `bangpick_queue_test` DB에서만 테스트합니다. 테스트는 Flyway 마이그레이션을 적용하고 자신이 만든 작업 행을 삭제합니다. 개발용 `bangpick` DB나 공유 DB를 테스트 URL로 지정하지 마세요.
 
 아래 명령은 기존 Compose DB와 격리된 일회용 MySQL을 실행합니다. 포트가 이미 사용 중이면 사용하지 않는 로컬 포트로 변경하세요.
 
@@ -19,7 +19,7 @@ Java 21과 Maven Wrapper로 실행합니다. Windows에서는 `mvnw.cmd`를 사�
 docker run --rm -d --name bangpick-queue-mysql-test -e MYSQL_ROOT_PASSWORD=queue-root-test -e MYSQL_DATABASE=bangpick_queue_test -e MYSQL_USER=queue_test -e MYSQL_PASSWORD=queue-test -p 127.0.0.1:13316:3306 mysql:8.4
 ```
 
-MySQL 준비가 끝나면 `backend/`에서 테스트 전용 환경변수를 지정하고 `./mvnw -Dtest=MediaQueueMySqlConcurrencyTests test`를 실행합니다. Windows에서는 `./mvnw` 대신 `.\mvnw.cmd`를 사용합니다.
+MySQL 준비가 끝나면 `backend/`에서 테스트 전용 환경변수를 지정하고 `./mvnw '-Dtest=MediaQueueMySqlConcurrencyTests,MediaQueueMySqlRecoveryTests' test`를 실행합니다. Windows에서는 `./mvnw` 대신 `.\mvnw.cmd`를 사용합니다.
 
 | 변수 | 일회용 컨테이너 예시 |
 | --- | --- |
@@ -28,6 +28,8 @@ MySQL 준비가 끝나면 `backend/`에서 테스트 전용 환경변수를 지�
 | `BANGPICK_QUEUE_TEST_MYSQL_PASSWORD` | `queue-test` |
 
 URL이 로컬 `bangpick_queue_test` DB를 가리키지 않으면 테스트는 실행되지 않습니다. 확인 후 `docker stop bangpick-queue-mysql-test`로 일회용 컨테이너를 종료합니다.
+
+복구 테스트는 테스트 DB의 `lease_expires`를 과거로 바꿔 만료를 재현합니다. 실제 운영에서 이 값을 변경하는 절차가 아닙니다. 백엔드는 GPU 프로세스의 종료를 판별하지 않으므로 운영자가 이전 실행의 종료를 확인해야 합니다.
 
 ## OCI 파일 전송 개발 환경
 
