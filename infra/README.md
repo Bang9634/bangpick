@@ -63,3 +63,5 @@ docker compose -f infra/compose.worker.yaml -f infra/compose.worker.gpu.yaml run
 GPU override는 컨테이너에 GPU를 할당합니다. 호스트에는 NVIDIA 드라이버와 Container Toolkit이 필요합니다. 현재 Worker 이미지는 전송용 Python 환경이며 CUDA·PyTorch·COLMAP·Nerfstudio를 포함하지 않습니다.
 
 현재 `worker-work` 볼륨을 `/work`에 연결합니다. 보존해야 하는 작업 파일은 컨테이너의 임시 쓰기 계층에만 두지 않습니다. 로컬 작업 공간의 정리와 원본 영상의 서버 보관 정책은 별개입니다.
+
+초기 단일 GPU 배포에서는 GPU 서버마다 `work-loop` 프로세스를 **하나만** 실행하고 `--work-dir /work`를 고정합니다. 수동 처리·업로드 명령도 같은 `/work` 볼륨을 사용해야 기존 파일 잠금을 공유합니다. Compose의 `worker-work` 볼륨은 그 경로를 보존하지만, 현재 이미지는 실제 학습 명령을 포함하지 않고 Compose에도 `work-loop` 실행 명령이 설정돼 있지 않습니다. 실제 프로세서가 연결되기 전에는 이 구성을 학습 서비스로 기동할 수 없습니다. `docker compose run`을 여러 번 호출하거나 다른 작업 디렉터리를 지정하면 인스턴스가 늘어날 수 있으므로 배포 시 실행 수를 별도로 관리합니다. [선택 이유와 잠금 범위](../docs/decisions/0007-single-gpu-worker.md)를 참고하세요.

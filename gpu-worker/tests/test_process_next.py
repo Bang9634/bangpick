@@ -1,7 +1,10 @@
 from argparse import Namespace
+import os
 from pathlib import Path
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
+import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -113,6 +116,48 @@ class ProcessNextTests(unittest.TestCase):
                 with self.assertRaisesRegex(TransferError, "already processing"):
                     run(Namespace(action="download-next", work_dir=work_dir), backend)
         self.assertEqual(backend.claim_next_calls, 0)
+
+    def test_other_process_holding_same_work_dir_blocks_claim(self):
+        backend = Backend()
+        holder_code = """
+from pathlib import Path
+import sys
+from bangpick_worker.supervisor import local_processing_slot
+with local_processing_slot(Path(sys.argv[1])):
+    Path(sys.argv[2]).write_text('locked', encoding='ascii')
+    sys.stdin.read(1)
+"""
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            ready = work_dir / "holder-ready"
+            environment = os.environ.copy()
+            source_dir = Path(__file__).resolve().parents[1] / "src"
+            environment["PYTHONPATH"] = str(source_dir) + os.pathsep + environment.get("PYTHONPATH", "")
+            holder = subprocess.Popen(
+                [sys.executable, "-c", holder_code, str(work_dir), str(ready)],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, env=environment,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.is_file() and holder.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.is_file(), "Separate process did not acquire the slot")
+                with self.assertRaisesRegex(TransferError, "already processing"):
+                    process_next(process_args(work_dir, write_result_command()), backend)
+                self.assertEqual(backend.claim_next_calls, 0)
+            finally:
+                if holder.poll() is None:
+                    holder.stdin.close()
+                    try:
+                        holder.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        holder.kill()
+                        holder.wait()
+                holder.stderr.close()
+            self.assertEqual(holder.returncode, 0)
+            with local_processing_slot(work_dir):
+                pass
 
     def test_slot_stays_held_during_upload_and_releases_after_completion(self):
         backend = Backend()

@@ -48,6 +48,8 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 
 heartbeat 실패나 중단 시에는 직접 실행한 자식 프로세스에 종료를 요청하지만, 그 프로세스가 따로 만든 하위 프로세스의 종료까지 보장하지 않습니다. 따라서 이 경우 실패를 자동 보고하지 않고 작업은 `PROCESSING`에 남을 수 있습니다. `process-next`는 점유 전에 잠금을 잡아 완료 보고까지 유지하고, `download-next`·`download`·`upload`·`complete`도 각 명령이 실행되는 동안 같은 잠금을 사용합니다. 수동 명령을 순서대로 여러 번 실행하면 작업을 여러 건 점유할 수 있으며, 다른 작업 디렉터리나 GPU 호스트의 실행도 이 잠금으로 제한되지 않습니다. 백엔드 전체의 GPU 동시 실행 수 제한은 별도 작업입니다.
 
+초기 한 GPU 배포의 실행 수와 작업 디렉터리 규칙은 [인프라 안내](../infra/README.md#worker-컨테이너)를 따릅니다. 파일 잠금은 같은 디렉터리를 쓰는 별도 프로세스 사이에서도 작업 점유 전에 적용되지만, 유휴 `work-loop` 프로세스가 하나뿐임을 보장하지는 않습니다.
+
 작업 폴더·실제 모델·개발용 토큰을 커밋하지 않습니다. 이미 PLY 업로드가 끝났는데 완료 응답만 실패했다면 `complete <job-id> --work-dir ../outputs/worker`를 실행합니다. PLY 업로드가 실패했다면 `upload`를 재실행해 새 URL을 받습니다.
 
 백엔드 API와 Worker는 JSON을 주고받고, 파일은 Worker가 OCI와 HTTPS로 직접 전송합니다. Worker에 OCI 키를 복사하거나 수신 포트를 열 필요는 없습니다. [전송 계약](../contracts/README.md#영상ply-전송) 참고.
