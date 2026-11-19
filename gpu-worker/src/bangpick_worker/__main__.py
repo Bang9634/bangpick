@@ -1,11 +1,13 @@
-"""Transfer media and process one queued job with a local command."""
+"""Transfer media and process queued jobs with a local command."""
 
 import argparse
 from enum import Enum
 import os
 from pathlib import Path
+import signal
 import sys
 from tempfile import NamedTemporaryFile
+import time
 from uuid import UUID
 
 from .transfers import CHUNK_SIZE, PermanentTransferError, TransferError, Transfers
@@ -27,6 +29,10 @@ class ReportedJobFailure(TransferError):
         self.job_id = job_id
         self.status = status
         super().__init__(message)
+
+
+class TerminationRequested(KeyboardInterrupt):
+    """The long-running loop received SIGTERM."""
 
 
 def save_lease(path: Path, lease: str) -> None:
@@ -178,9 +184,37 @@ def process_next(args: argparse.Namespace, transfers: Transfers) -> ProcessNextR
         return ProcessNextResult.COMPLETED
 
 
+def work_loop(args: argparse.Namespace, transfers: Transfers) -> None:
+    """Poll for jobs; stop if the current attempt's backend state is uncertain.
+
+    A reported failure permits another claim only when the processor command
+    has also stopped its own GPU descendants before exiting.
+    """
+    def stop_on_sigterm(_signum, _frame):
+        raise TerminationRequested
+
+    previous_handler = signal.signal(signal.SIGTERM, stop_on_sigterm)
+    try:
+        while True:
+            try:
+                result = process_next(args, transfers)
+            except ReportedJobFailure as error:
+                print(f"Job {error.job_id} is {error.status}: {error}", file=sys.stderr)
+                continue
+            if result == ProcessNextResult.NO_JOB:
+                time.sleep(5)
+            elif result != ProcessNextResult.COMPLETED:
+                raise TransferError("Processing returned an unknown result; stopping the worker")
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+
+
 def run(args: argparse.Namespace, transfers: Transfers) -> None:
     if args.action == "process-next":
         process_next(args, transfers)
+        return
+    if args.action == "work-loop":
+        work_loop(args, transfers)
         return
     if args.action == "download-next":
         with local_processing_slot(args.work_dir):
@@ -229,6 +263,7 @@ def main() -> None:
     for action, help_text in {
         "download-next": "Claim the next queued job and download its source video",
         "process-next": "Claim, process and upload one queued job",
+        "work-loop": "Continuously claim and process queued jobs",
         "download": "Claim the job and download its source video",
         "heartbeat": "Renew the current lease for a job once",
         "run-process": "Run one local command with automatic heartbeats",
@@ -237,18 +272,18 @@ def main() -> None:
         "complete": "Retry the completion report after an upload succeeded",
     }.items():
         command = commands.add_parser(action, help=help_text)
-        if action not in {"download-next", "process-next"}:
+        if action not in {"download-next", "process-next", "work-loop"}:
             command.add_argument("job_id", type=UUID)
         command.add_argument("--work-dir", required=True, type=Path)
         if action == "upload":
             command.add_argument("ply", type=Path)
-        if action in {"run-process", "process-next", "processing-failed"}:
+        if action in {"run-process", "process-next", "work-loop", "processing-failed"}:
             command.add_argument("--retryable", action="store_true",
                                  help="Retry a failed attempt, up to three total attempts")
-        if action in {"run-process", "process-next"}:
+        if action in {"run-process", "process-next", "work-loop"}:
             command.epilog = "Put -- before the local processing command."
     argv = sys.argv[1:]
-    if argv[:1] in (["run-process"], ["process-next"]):
+    if argv[:1] in (["run-process"], ["process-next"], ["work-loop"]):
         if "--" not in argv:
             if "-h" in argv or "--help" in argv:
                 parser.parse_args(argv)
@@ -262,6 +297,8 @@ def main() -> None:
         args = parser.parse_args(argv)
     try:
         run(args, Transfers(os.getenv("BANGPICK_API_URL", ""), os.getenv("BANGPICK_MEDIA_WORKER_TOKEN", "")))
+    except TerminationRequested:
+        parser.exit(143, "Worker terminated\n")
     except TransferError as error:
         parser.exit(1, f"{error}\n")
     except (ValueError, TypeError, AttributeError, KeyError):

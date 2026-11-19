@@ -1,6 +1,6 @@
 # GPU Worker
 
-Worker는 작업 하나의 원본 영상과 결과 PLY를 전송하고, 로컬 처리 명령을 실행하는 동안 점유를 갱신하는 CLI입니다. 대기 중인 작업을 하나 골라 점유하거나 작업 ID를 직접 지정할 수 있습니다. 전송 및 감시 기능 자체에는 GPU가 필요하지 않습니다.
+Worker는 원본 영상과 결과 PLY를 전송하고, 로컬 처리 명령을 실행하는 동안 점유를 갱신하는 CLI입니다. 대기 중인 작업을 반복해서 처리하거나 한 건만 골라 처리할 수 있고, 작업 ID를 직접 지정할 수도 있습니다. 전송 및 감시 기능 자체에는 GPU가 필요하지 않습니다.
 
 Python 3.11 이상에서 `pyproject.toml`이 있는 디렉토리에서 환경을 준비합니다.
 
@@ -18,6 +18,7 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 ```sh
 .venv/bin/bangpick-worker download-next --work-dir ../outputs/worker
 .venv/bin/bangpick-worker process-next --work-dir ../outputs/worker -- python /path/to/processor.py
+.venv/bin/bangpick-worker work-loop --work-dir ../outputs/worker -- python /path/to/processor.py
 .venv/bin/bangpick-worker download <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker heartbeat <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker run-process <job-id> --work-dir ../outputs/worker -- python /path/to/processor.py
@@ -28,6 +29,8 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 `download-next`는 백엔드의 `claim-next`를 한 번 호출합니다. 대기 작업이 없으면 `No queued job`을 출력하고 정상 종료합니다. 작업이 있으면 `<job-id>/lease`에 점유 ID를 먼저 저장하고 `<job-id>/source.*`에 영상을 다운로드합니다. 현재 명령은 한 번 실행하고 종료하며 학습을 시작하지 않습니다.
 
 `process-next`는 잠금을 잡은 뒤 작업 1건을 점유하고 다운로드·처리 명령·PLY 확인·업로드·완료 보고까지 수행한 후 종료합니다. 대기 작업이 없으면 처리 명령을 실행하지 않습니다. 처리 명령의 현재 디렉터리는 `<work-dir>/<job-id>`이며, 입력 영상 절대 경로는 `BANGPICK_INPUT_VIDEO`, 결과 PLY 절대 경로는 `BANGPICK_OUTPUT_PLY` 환경 변수로 전달합니다. 결과는 점유 ID별 `<job-id>/attempts/<lease-id>/room.ply`에 만들어 이전 시도의 파일과 분리합니다. 처리 명령은 GPU 하위 프로세스의 완료·중단까지 기다리고, PLY 쓰기를 마쳐 파일을 닫은 다음 종료해야 합니다. 분리 실행한 하위 프로세스의 종료는 Worker가 보장하지 않습니다. 실제 전처리·3DGS 학습 명령은 아직 연결되지 않았습니다.
+
+`work-loop`는 같은 처리 과정을 반복합니다. 작업이 없으면 5초 기다렸다가 다시 조회하고, 완료되거나 백엔드가 실패를 `QUEUED` 또는 `FAILED`로 확인하면 바로 다음 작업을 조회합니다. 점유 응답·실패 보고·heartbeat·결과 업로드·완료 보고가 불확실하면 오류로 종료하며 다음 작업을 점유하지 않습니다. Ctrl+C 또는 SIGTERM을 받으면 반복을 멈추고, 처리 명령 실행 중이었다면 직접 실행한 자식 프로세스의 종료를 요청합니다. 처리 명령이 만든 별도 GPU 프로세스의 종료까지 보장하지 않으므로, 처리 명령은 하위 프로세스가 끝난 뒤에만 종료해야 합니다. `work-loop`에도 `--retryable`을 `--` 앞에 지정할 수 있습니다.
 
 `process-next`는 처리 명령의 시작 실패·비정상 종료 또는 PLY 누락·기본 형식 오류를 `processing-failed`로 보고합니다. 기본은 `FAILED`이며, 일시 오류가 예상될 때는 `--retryable`을 `--` 앞에 붙입니다. PLY 업로드나 완료 보고가 실패하면 작업을 재대기시키지 않고 점유 파일과 시도별 PLY를 보존합니다. 출력된 경로로 `upload <job-id> <PLY 경로> --work-dir ...`를 다시 실행하거나, 업로드가 끝났고 완료 응답만 실패했다면 `complete <job-id> --work-dir ...`를 사용합니다. `process-next`는 PLY의 존재·크기·첫 줄 `ply`만 확인하며 웹 렌더링 호환성까지 검증하지는 않습니다.
 
