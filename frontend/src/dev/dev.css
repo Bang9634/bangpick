@@ -1,0 +1,77 @@
+.dev-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+
+.dev-page h1 {
+  margin: 12px 0 24px;
+}
+
+.dev-page h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.dev-page a {
+  color: #205b47;
+}
+
+.dev-page section {
+  margin-bottom: 16px;
+  padding: 20px;
+  border: 1px solid #d5dfda;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.dev-links {
+  padding-inline-start: 24px;
+}
+
+.dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.dev-actions button {
+  padding: 8px 14px;
+  border: 1px solid #205b47;
+  border-radius: 6px;
+  background: #fff;
+  color: #205b47;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dev-actions button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.dev-actions [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.dev-page [role="status"]:empty {
+  margin: 0;
+}
+
+.dev-member {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+}
+
+.dev-member dt {
+  font-weight: 600;
+}
+
+.dev-member dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

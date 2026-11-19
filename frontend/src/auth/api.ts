@@ -17,6 +17,11 @@ export async function loadAccount(signal: AbortSignal): Promise<Account> {
   return { loginPath, member: await response.json() as Member }
 }
 
+export async function getAdminAccessStatus(): Promise<number> {
+  const response = await fetch('/api/admin/access', { cache: 'no-store' })
+  return response.status
+}
+
 export async function csrfHeaders(signal?: AbortSignal): Promise<Record<string, string>> {
   const response = await fetch('/api/auth/csrf', { signal, cache: 'no-store' })
   if (response.status === 401) throw new Error('다시 로그인하세요.')
