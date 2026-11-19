@@ -1,4 +1,4 @@
-"""Transfer one job or supervise a local processing command with heartbeats."""
+"""Transfer media and process one queued job with a local command."""
 
 import argparse
 import os
@@ -51,7 +51,8 @@ def download_assigned(job_id: str, lease: str | None, directory: Path, transfers
         if extension not in {".mp4", ".mov", ".webm"}:
             raise PermanentTransferError("Backend returned an unsupported video extension")
         directory.mkdir(parents=True, exist_ok=True)
-        # 백엔드는 이미 점유를 부여했다. 다운로드 실패 후에도 같은 점유로 재시도할 수 있게 저장한다.
+        # 수동 다운로드는 저장한 점유 ID로 재시도한다. 자동 점유는 실패 보고가
+        # 확인되지 않았을 때 이 ID로 백엔드 상태를 확인한다.
         save_lease(lease_file, lease)
         target = directory / ("source" + extension)
         transfers.download(claim["transfer"], target)
@@ -73,15 +74,23 @@ def download_next_job(work_dir: Path, transfers: Transfers) -> tuple[str, str, P
     job_id = str(UUID(next_job["jobId"]))
     lease = str(UUID(next_job["leaseId"]))
     directory = work_dir / job_id
-    directory.mkdir(parents=True, exist_ok=True)
-    # 점유가 이미 시작됐으므로 후속 API나 다운로드가 실패해도 ID를 잃지 않도록 먼저 기록한다.
-    save_lease(directory / "lease", lease)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        # 점유 응답 직후 기록한다. 기록할 수 없다면 메모리의 점유 ID로 실패를 보고한다.
+        save_lease(directory / "lease", lease)
+    except OSError:
+        try:
+            report_input_failure(transfers, job_id, lease, True)
+        except TransferError:
+            raise TransferError(f"Could not save the lease for job {job_id}; input failure was not confirmed") from None
+        raise
     print(f"Claimed job {job_id}")
     lease, source = download_assigned(job_id, lease, directory, transfers, True)
     return job_id, lease, source
 
 
 def validate_ply(ply: Path) -> int:
+    """존재·확장자·크기·첫 줄만 검사한다. Gaussian 속성과 웹 호환성은 검증하지 않는다."""
     if ply.suffix.lower() != ".ply" or not ply.is_file():
         raise TransferError("The result must be a PLY file")
     size = ply.stat().st_size
@@ -108,6 +117,12 @@ def complete_result(job_id: str, lease: str, transfers: Transfers) -> None:
 
 
 def process_next(args: argparse.Namespace, transfers: Transfers) -> None:
+    """잠금을 점유 전부터 완료 보고까지 유지하며 작업 한 건을 처리한다.
+
+    점유 ID를 받은 뒤 입력 저장·다운로드 실패는 input-failed로, 처리 명령의
+    시작 실패·비정상 종료·PLY 검사 실패는 processing-failed로 보고한다.
+    heartbeat나 결과 업로드·완료 확인이 불확실하면 자동 재대기시키지 않는다.
+    """
     if not args.processor:
         raise TransferError("Specify a processing command before claiming a job")
     with local_processing_slot(args.work_dir):

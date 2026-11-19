@@ -70,6 +70,45 @@ class DownloadNextTests(unittest.TestCase):
             self.assertEqual((work_dir / str(job_id) / "lease").read_text(encoding="ascii"), str(lease_id))
         self.assertEqual(backend.actions, ["claim", "input-failed"])
 
+    def test_local_lease_save_failure_reports_input_failure(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+
+        class WorkerBackend:
+            def __init__(self):
+                self.report = None
+
+            def claim_next(self):
+                return {"jobId": str(job_id), "leaseId": str(lease_id)}
+
+            def command(self, actual_job_id, action, payload):
+                self.report = (actual_job_id, action, payload)
+                return {"status": "QUEUED"}
+
+        backend = WorkerBackend()
+        with TemporaryDirectory() as temporary:
+            with patch("bangpick_worker.__main__.save_lease", side_effect=OSError("Disk full")):
+                with self.assertRaisesRegex(OSError, "Disk full"):
+                    run(Namespace(action="download-next", work_dir=Path(temporary)), backend)
+        self.assertEqual(backend.report, (str(job_id), "input-failed",
+                                          {"leaseId": str(lease_id), "retryable": True}))
+
+    def test_unconfirmed_local_save_failure_identifies_the_job(self):
+        job_id = uuid4()
+        lease_id = uuid4()
+
+        class UnavailableBackend:
+            def claim_next(self):
+                return {"jobId": str(job_id), "leaseId": str(lease_id)}
+
+            def command(self, actual_job_id, action, payload):
+                raise TransferError("Backend unavailable")
+
+        with TemporaryDirectory() as temporary:
+            with patch("bangpick_worker.__main__.save_lease", side_effect=OSError("Disk full")):
+                with self.assertRaisesRegex(TransferError, f"job {job_id}; input failure was not confirmed"):
+                    run(Namespace(action="download-next", work_dir=Path(temporary)), UnavailableBackend())
+
     def test_download_failure_reports_retryable_or_permanent_error(self):
         for error, retryable in ((TransferError("Download interrupted"), True),
                                  (PermanentTransferError("Invalid grant"), False)):
