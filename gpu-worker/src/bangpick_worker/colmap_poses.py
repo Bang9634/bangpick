@@ -141,7 +141,10 @@ def estimate_camera_poses(
             models[model_dir.name] = {"registered_images": registered_images, "points3d": points}
 
         if not models:
-            raise ColmapError("COLMAP이 희소 모델을 생성하지 못했습니다")
+            raise ColmapError(
+                f"{len(image_names)}장 중 0장 사용 가능. "
+                "COLMAP이 모델을 생성하지 못했습니다."
+            )
 
         # 모델이 연결할 수 있는 사진을 찾지 못하면, 모델 B로 분열
         # 모델중에서 가장 많은 프레임이 등록된 모델을 학습에 사용함.
@@ -149,6 +152,22 @@ def estimate_camera_poses(
         # 내 자취방 실험할 떄 2개로 분리되는 문제발생.
         # 결론: 모델이 분리되는 경우는 COLMAP이 사진을 연결하지 못한 경우
         selected = max(models, key=lambda name: models[name]["registered_images"])
+
+        total_images = len(image_names)
+        registered_images = models[selected]["registered_images"]
+        registered_ratio = registered_images / total_images
+        registration = (
+            f"{total_images}장 중 {registered_images}장 사용 가능 "
+            f"({registered_ratio:.1%})"
+        )
+        print(f"COLMAP: {registration}")
+
+        # 100장 이상, 전체의 50% 이상이 모두 등록돼야 학습을 시작
+        if registered_images < 100 or registered_ratio < 0.5:
+            raise ColmapError(
+                f"{registration}. 학습 기준은 100장 이상 및 50% 이상입니다."
+            )
+
         model_path = Path("sparse") / selected
         summary = {
             "input_images": len(image_names),

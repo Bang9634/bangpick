@@ -1,6 +1,8 @@
 """COLMAP 응답을 재현해 실행 순서와 모델 선택, 실패 정리를 확인한다."""
 
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -17,10 +19,9 @@ class ColmapTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.images = self.root / "images"
         self.images.mkdir()
-        for number in range(1, 7):
-            (self.images / f"frame_{number:06d}.jpg").touch()
+        self.write_test_images(200)
         self.output = self.root / "colmap"
-        self.model_counts = {"0": 2, "1": 5}
+        self.model_counts = {"0": 2, "1": 150}
         self.matcher_option = "--FeatureMatching.max_num_matches"
 
         executable = patch.object(
@@ -37,6 +38,12 @@ class ColmapTests(unittest.TestCase):
         )
         self.runner = runner.start()
         self.addCleanup(runner.stop)
+
+    def write_test_images(self, count):
+        for image in self.images.glob("*.jpg"):
+            image.unlink()
+        for number in range(1, count + 1):
+            (self.images / f"frame_{number:06d}.jpg").touch()
 
     def simulate_colmap(self, executable, command, *arguments):
         """결과를 읽는 코드를 실행할 수 있도록 필요한 파일을 만든다."""
@@ -72,12 +79,83 @@ class ColmapTests(unittest.TestCase):
         summary = json.loads(
             (self.output / "summary.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(summary["input_images"], 6)
+        self.assertEqual(summary["input_images"], 200)
         self.assertEqual(summary["model_count"], 2)
         self.assertEqual(summary["selected_model"], "sparse/1")
         self.assertEqual(summary["models"]["0"]["registered_images"], 2)
-        self.assertEqual(summary["models"]["1"]["registered_images"], 5)
+        self.assertEqual(summary["models"]["1"]["registered_images"], 150)
         self.assertEqual(list(self.root.glob(".colmap-*")), [])
+
+    def test_accepts_exactly_100_images_and_50_percent(self):
+        self.model_counts = {"0": 100}
+        output = StringIO()
+
+        with redirect_stdout(output):
+            selected = colmap_poses.estimate_camera_poses(self.images, self.output)
+
+        self.assertTrue(selected.is_dir())
+        self.assertIn("200장 중 100장 사용 가능 (50.0%)", output.getvalue())
+
+    def test_odd_input_count_requires_rounding_up_to_half(self):
+        self.write_test_images(495)
+        self.model_counts = {"0": 248}
+
+        selected = colmap_poses.estimate_camera_poses(self.images, self.output)
+
+        self.assertTrue(selected.is_dir())
+
+    def test_rejects_insufficient_count_or_ratio_and_preserves_input(self):
+        cases = (
+            (100, {"0": 99}),
+            (495, {"0": 247}),
+            (495, {"0": 2}),
+            (400, {"0": 100, "1": 100}),
+        )
+        for total, models in cases:
+            with self.subTest(total=total, models=models):
+                self.write_test_images(total)
+                self.model_counts = models
+                output = StringIO()
+
+                with redirect_stdout(output):
+                    with self.assertRaises(colmap_poses.ColmapError) as caught:
+                        colmap_poses.estimate_camera_poses(self.images, self.output)
+
+                registered = max(models.values())
+                message = f"{total}장 중 {registered}장 사용 가능"
+                self.assertIn(message, output.getvalue())
+                self.assertIn(message, str(caught.exception))
+                self.assertIn("100장 이상 및 50% 이상", str(caught.exception))
+                self.assertFalse(self.output.exists())
+                self.assertEqual(list(self.root.glob(".colmap-*")), [])
+                self.assertEqual(len(list(self.images.glob("*.jpg"))), total)
+
+    def test_quality_failure_allows_retry_with_exhaustive_matching(self):
+        self.write_test_images(495)
+        self.model_counts = {"0": 2}
+
+        with self.assertRaises(colmap_poses.ColmapError):
+            colmap_poses.estimate_camera_poses(
+                self.images, self.output, matching="sequential"
+            )
+
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(self.root.glob(".colmap-*")), [])
+        self.model_counts = {"0": 300}
+        self.runner.reset_mock()
+
+        selected = colmap_poses.estimate_camera_poses(
+            self.images, self.output, matching="exhaustive"
+        )
+
+        self.assertTrue(selected.is_dir())
+        self.assertEqual(len(list(self.images.glob("*.jpg"))), 495)
+        summary = json.loads(
+            (self.output / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(summary["matching"], "exhaustive")
+        self.assertEqual(summary["models"]["0"]["registered_images"], 300)
+        self.assertEqual(self.runner.call_args_list[2].args[1], "exhaustive_matcher")
 
     def test_supports_matching_modes_and_version_specific_option_names(self):
         for mode in ("sequential", "exhaustive"):
@@ -131,7 +209,7 @@ class ColmapTests(unittest.TestCase):
         self.assertTrue(selected.is_dir())
 
     def test_rejects_missing_model_and_impossible_registration_count(self):
-        for counts in ({}, {"0": 0}, {"0": 7}):
+        for counts in ({}, {"0": 0}, {"0": 201}):
             with self.subTest(counts=counts):
                 self.model_counts = counts
                 with self.assertRaises(colmap_poses.ColmapError):

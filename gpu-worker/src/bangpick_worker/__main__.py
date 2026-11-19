@@ -33,9 +33,6 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
     ply_path = args.ply if args.action == "upload" else None
     if args.action in {"download", "preprocess", "reconstruct"}:
         images = directory / "images"
-
-        if args.action in {"preprocess", "reconstruct"} and images.exists():
-            raise PreprocessError(f"Frames already exist in {images}")
         
         claim = transfers.command(job_id, "claim", {"leaseId": lease})
         lease = str(UUID(claim["leaseId"]))
@@ -55,15 +52,29 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
         if args.action == "download":
             return
 
-        # 영상 전처리 (JPG 추출)
-        count = extract_frames(target, images)
-        print(f"Extracted {count} frames to {images}")
+        # 기존 JPG 재사용, 없으면 다시 추출함
+        if images.exists():
+            if not images.is_dir():
+                raise PreprocessError(f"JPG 저장 폴더와 같은 이름의 파일이 이미 있습니다: {images}")
+
+            count = sum(
+                1 for frame in images.glob("frame_*.jpg") if frame.is_file() and frame.stat().st_size > 0
+            )
+
+            if count == 0:
+                raise PreprocessError(f"재사용할 JPG 프레임이 없습니다: {images}")
+
+            print((f"Reusing {count} frames from {images}"))
+
+        else:
+            count = extract_frames(target, images)
+            print(f"Extracted {count} frames to {images}")
+
 
         if args.action == "preprocess":
             return
 
-        # reconstruct 명령 실행
-        model_dir = estimate_camera_poses(images, directory / "colmap")
+        model_dir = estimate_camera_poses(images, directory / "colmap", matching = args.matching)
         ply_path = train_3dgs(images, model_dir, directory / "3dgs")
      
     if not lease:
@@ -101,9 +112,19 @@ def main() -> None:
         command = commands.add_parser(action, help=help_text)
         command.add_argument("job_id", type=UUID)
         command.add_argument("--work-dir", required=True, type=Path)
+
+        if action == "reconstruct":
+            command.add_argument(
+                "--matching",
+                choices=("sequential", "exhaustive"),
+                default="sequential",
+            )
+
         if action == "upload":
             command.add_argument("ply", type=Path)
+
     args = parser.parse_args()
+
     try:
         run(args, Transfers(os.getenv("BANGPICK_API_URL", ""), os.getenv("BANGPICK_MEDIA_WORKER_TOKEN", "")))
     except (TransferError, PreprocessError, ColmapError, TrainingError) as error:

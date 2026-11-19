@@ -66,6 +66,7 @@ class WorkerTests(unittest.TestCase):
             job_id=self.job_id,
             work_dir=self.root,
             ply=self.ply,
+            matching="sequential",
         )
 
     def save_lease(self):
@@ -81,7 +82,11 @@ class WorkerTests(unittest.TestCase):
                 call.command(str(self.job_id), "claim", {"leaseId": None}),
                 call.download(self.input_grant, self.directory / "source.mp4"),
                 call.extract(self.directory / "source.mp4", self.directory / "images"),
-                call.poses(self.directory / "images", self.directory / "colmap"),
+                call.poses(
+                    self.directory / "images",
+                    self.directory / "colmap",
+                    matching="sequential",
+                ),
                 call.train(self.directory / "images", self.model, self.directory / "3dgs"),
                 call.command(
                     str(self.job_id),
@@ -110,6 +115,59 @@ class WorkerTests(unittest.TestCase):
                 self.history.train.assert_not_called()
                 self.transfers.upload.assert_not_called()
                 self.assertEqual(self.transfers.command.call_count, 1)
+
+    def write_test_frames(self, _video_path, images_dir):
+        images_dir.mkdir()
+        (images_dir / "frame_000001.jpg").write_bytes(b"test frame 1")
+        (images_dir / "frame_000002.jpg").write_bytes(b"test frame 2")
+        return 2
+
+    def test_reconstruct_reuses_frames_from_preprocess(self):
+        images_dir = self.directory / "images"
+        self.history.extract.side_effect = self.write_test_frames
+
+        worker.run(self.arguments("preprocess"), self.transfers)
+        self.history.poses.assert_not_called()
+
+        worker.run(self.arguments("reconstruct"), self.transfers)
+
+        self.history.extract.assert_called_once_with(
+            self.directory / "source.mp4", images_dir
+        )
+        self.history.poses.assert_called_once_with(
+            images_dir, self.directory / "colmap", matching="sequential"
+        )
+
+    def test_reconstruct_reuses_frames_after_colmap_failure(self):
+        images_dir = self.directory / "images"
+        self.history.extract.side_effect = self.write_test_frames
+        self.history.poses.side_effect = [
+            worker.ColmapError("COLMAP 실행 실패"),
+            self.model,
+        ]
+
+        with self.assertRaises(worker.ColmapError):
+            worker.run(self.arguments("reconstruct"), self.transfers)
+
+        self.history.train.assert_not_called()
+        self.transfers.upload.assert_not_called()
+
+        retry_args = self.arguments("reconstruct")
+        retry_args.matching = "exhaustive"
+        worker.run(retry_args, self.transfers)
+
+        self.history.extract.assert_called_once_with(
+            self.directory / "source.mp4", images_dir
+        )
+        self.assertEqual(
+            self.history.poses.call_args_list,
+            [
+                call(images_dir, self.directory / "colmap", matching="sequential"),
+                call(images_dir, self.directory / "colmap", matching="exhaustive"),
+            ],
+        )
+        self.history.train.assert_called_once()
+        self.transfers.upload.assert_called_once()
 
     def test_processing_failure_prevents_upload_and_completion(self):
         cases = (
@@ -212,6 +270,34 @@ class WorkerCliTests(unittest.TestCase):
         self.assertEqual(parsed.action, "reconstruct")
         self.assertEqual(parsed.job_id, job_id)
         self.assertEqual(parsed.work_dir, Path("work"))
+        self.assertEqual(parsed.matching, "sequential")
+
+    def test_reconstruct_accepts_exhaustive_matching(self):
+        arguments = [
+            "bangpick-worker", "reconstruct", str(uuid4()),
+            "--work-dir", "work", "--matching", "exhaustive",
+        ]
+        with patch("sys.argv", arguments):
+            with patch.object(worker, "Transfers"):
+                with patch.object(worker, "run") as run:
+                    worker.main()
+
+        self.assertEqual(run.call_args.args[0].matching, "exhaustive")
+
+    def test_reconstruct_rejects_quality_threshold_options(self):
+        for option in ("--min-registered-images", "--min-registered-percent"):
+            with self.subTest(option=option):
+                arguments = [
+                    "bangpick-worker", "reconstruct", str(uuid4()),
+                    "--work-dir", "work", option, "2",
+                ]
+                with patch("sys.argv", arguments), redirect_stderr(StringIO()):
+                    with patch.object(worker, "run") as run:
+                        with self.assertRaises(SystemExit) as caught:
+                            worker.main()
+
+                self.assertEqual(caught.exception.code, 2)
+                run.assert_not_called()
 
     def test_stage_errors_exit_with_failure_status_and_message(self):
         arguments = [
