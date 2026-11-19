@@ -11,8 +11,8 @@ digraph SystemOverview {
 
   browser [pos="4.9,5.8!", label="사용자 브라우저\nReact 화면 · 3D 뷰어", fillcolor="#eff6ff", color="#60a5fa"];
   web [pos="2.15,4.35!", label="웹 서버 · Docker\n정적 화면 제공 · API 프록시"];
-  backend [pos="2.15,2.75!", label="Java 백엔드 · Docker\n권한 · 매물 · 작업 · 검수", fillcolor="#f0fdfa", color="#2dd4bf"];
-  db [pos="2.15,1.0!", label="MySQL\n매물·작업·자산 메타데이터"];
+  backend [pos="2.15,2.75!", label="Java 백엔드 · Docker\nGoogle 로그인 · 권한 · 매물 · 작업", fillcolor="#f0fdfa", color="#2dd4bf"];
+  db [pos="2.15,1.0!", label="MySQL\n회원·매물·작업·자산 메타데이터"];
   storage [pos="7.85,3.25!", label="오브젝트 스토리지\n원본 영상 · 투어 결과 파일", fillcolor="#fff7ed", color="#fb923c"];
   worker [pos="7.85,1.0!", label="독립 GPU Worker\n전처리 → 3DGS 학습 → 후처리", fillcolor="#faf5ff", color="#c084fc"];
 

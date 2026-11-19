@@ -7,6 +7,7 @@
 | 프론트엔드 | Google 로그인·로그아웃 조작, 영상 전송·작업 조회 함수, Spark·Three.js 기반 PLY 뷰어 |
 | 백엔드 | 회원 세션·관리자 접근 제어, 회원별 영상·PLY 접근, 객체 크기 확인, MySQL 작업 상태와 결과 키 관리 |
 | GPU Worker | 지정 작업 점유, OCI 원본 다운로드와 프레임 추출, 로컬 PLY 업로드와 완료 보고 |
+
 | 로컬 인프라 | 웹·백엔드·MySQL Compose, Worker 별도 Compose와 GPU 할당 설정 |
 
 Google 로그인과 OCI 전송은 각각 설정을 켜서 사용합니다. 환경변수와 관리자 지정은 [백엔드 실행 안내](../backend/README.md#google-로그인-개발-환경), API 형식은 [서비스 간 계약](../contracts/README.md)에 있습니다.

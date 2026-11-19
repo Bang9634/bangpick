@@ -26,6 +26,10 @@ services:
       DB_URL: jdbc:mysql://db:3306/${DB_NAME:-bangpick}
       DB_USERNAME: ${DB_USERNAME:-bangpick}
       DB_PASSWORD: ${DB_PASSWORD:?Create .env with DB_PASSWORD}
+      BANGPICK_AUTH_ENABLED: ${BANGPICK_AUTH_ENABLED:-false}
+      BANGPICK_WEB_ORIGIN: ${BANGPICK_WEB_ORIGIN:-http://localhost:${WEB_PORT:-8088}}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
