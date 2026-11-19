@@ -1,6 +1,7 @@
 """Transfer media and process one queued job with a local command."""
 
 import argparse
+from enum import Enum
 import os
 from pathlib import Path
 import sys
@@ -9,6 +10,23 @@ from uuid import UUID
 
 from .transfers import CHUNK_SIZE, PermanentTransferError, TransferError, Transfers
 from .supervisor import ProcessStartError, local_processing_slot, renew_lease, supervise, supervise_in_slot
+
+
+class ProcessNextResult(Enum):
+    NO_JOB = "no_job"
+    COMPLETED = "completed"
+
+
+class ReportedJobFailure(TransferError):
+    """The backend confirmed QUEUED or FAILED for this attempt.
+
+    This does not prove that a processor's detached descendants have stopped.
+    """
+
+    def __init__(self, job_id: str, status: str, message: str):
+        self.job_id = job_id
+        self.status = status
+        super().__init__(message)
 
 
 def save_lease(path: Path, lease: str) -> None:
@@ -21,8 +39,8 @@ def save_lease(path: Path, lease: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def report_input_failure(transfers: Transfers, job_id: str, lease: str, retryable: bool) -> None:
-    report_failure(transfers, job_id, lease, "input-failed", retryable)
+def report_input_failure(transfers: Transfers, job_id: str, lease: str, retryable: bool) -> str:
+    return report_failure(transfers, job_id, lease, "input-failed", retryable)
 
 
 def report_failure(transfers: Transfers, job_id: str, lease: str, action: str, retryable: bool) -> str:
@@ -59,7 +77,9 @@ def download_assigned(job_id: str, lease: str | None, directory: Path, transfers
     except (TransferError, OSError, ValueError, TypeError, AttributeError, KeyError) as error:
         if report_failure_on_error:
             retryable = isinstance(error, (TransferError, OSError)) and not isinstance(error, PermanentTransferError)
-            report_input_failure(transfers, job_id, lease, retryable)
+            status = report_input_failure(transfers, job_id, lease, retryable)
+            message = str(error) if isinstance(error, TransferError) else "Input file access or transfer failed"
+            raise ReportedJobFailure(job_id, status, message) from error
         raise
     print(f"Source saved to {target}")
     return lease, target
@@ -78,12 +98,12 @@ def download_next_job(work_dir: Path, transfers: Transfers) -> tuple[str, str, P
         directory.mkdir(parents=True, exist_ok=True)
         # 점유 응답 직후 기록한다. 기록할 수 없다면 메모리의 점유 ID로 실패를 보고한다.
         save_lease(directory / "lease", lease)
-    except OSError:
+    except OSError as error:
         try:
-            report_input_failure(transfers, job_id, lease, True)
+            status = report_input_failure(transfers, job_id, lease, True)
         except TransferError:
             raise TransferError(f"Could not save the lease for job {job_id}; input failure was not confirmed") from None
-        raise
+        raise ReportedJobFailure(job_id, status, f"Could not save the lease for job {job_id}") from error
     print(f"Claimed job {job_id}")
     lease, source = download_assigned(job_id, lease, directory, transfers, True)
     return job_id, lease, source
@@ -116,11 +136,12 @@ def complete_result(job_id: str, lease: str, transfers: Transfers) -> None:
     print(f"Result recorded for job {job_id}")
 
 
-def process_next(args: argparse.Namespace, transfers: Transfers) -> None:
+def process_next(args: argparse.Namespace, transfers: Transfers) -> ProcessNextResult:
     """잠금을 점유 전부터 완료 보고까지 유지하며 작업 한 건을 처리한다.
 
     점유 ID를 받은 뒤 입력 저장·다운로드 실패는 input-failed로, 처리 명령의
     시작 실패·비정상 종료·PLY 검사 실패는 processing-failed로 보고한다.
+    대기 작업 없음·완료는 반환하고, 실패 보고가 확인되면 ReportedJobFailure를 낸다.
     heartbeat나 결과 업로드·완료 확인이 불확실하면 자동 재대기시키지 않는다.
     """
     if not args.processor:
@@ -128,23 +149,24 @@ def process_next(args: argparse.Namespace, transfers: Transfers) -> None:
     with local_processing_slot(args.work_dir):
         claimed = download_next_job(args.work_dir, transfers)
         if claimed is None:
-            return
+            return ProcessNextResult.NO_JOB
         job_id, lease, source = claimed
         output = args.work_dir / job_id / "attempts" / lease / "room.ply"
         try:
             result = supervise_in_slot(job_id, lease, args.work_dir, args.processor, transfers,
                                        input_video=source, output_ply=output)
-        except ProcessStartError:
-            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
-            raise
+        except ProcessStartError as error:
+            status = report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+            raise ReportedJobFailure(job_id, status, str(error)) from error
         if result != 0:
-            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
-            raise TransferError(f"Processing command exited with code {result}")
+            status = report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+            raise ReportedJobFailure(job_id, status, f"Processing command exited with code {result}")
         try:
             validate_ply(output)
-        except (TransferError, OSError):
-            report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
-            raise
+        except (TransferError, OSError) as error:
+            status = report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
+            message = str(error) if isinstance(error, TransferError) else "Could not read the PLY result"
+            raise ReportedJobFailure(job_id, status, message) from error
         try:
             upload_ply(job_id, lease, output, transfers)
         except (TransferError, OSError):
@@ -153,6 +175,7 @@ def process_next(args: argparse.Namespace, transfers: Transfers) -> None:
             complete_result(job_id, lease, transfers)
         except TransferError:
             raise TransferError(f"Completion for job {job_id} was not confirmed; retry complete") from None
+        return ProcessNextResult.COMPLETED
 
 
 def run(args: argparse.Namespace, transfers: Transfers) -> None:

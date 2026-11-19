@@ -7,7 +7,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from bangpick_worker import __main__ as cli
-from bangpick_worker.__main__ import run
+from bangpick_worker.__main__ import ProcessNextResult, ReportedJobFailure, process_next, run
 from bangpick_worker.supervisor import local_processing_slot
 from bangpick_worker.transfers import TransferError
 
@@ -18,13 +18,19 @@ class Backend:
         self.lease = str(uuid4())
         self.actions = []
         self.claim_next_calls = 0
+        self.fail_claim = False
         self.uploaded = None
         self.fail_upload = False
         self.fail_completion = False
+        self.fail_download = False
+        self.fail_heartbeat = False
+        self.fail_failure_report = False
         self.on_upload = None
 
     def claim_next(self):
         self.claim_next_calls += 1
+        if self.fail_claim:
+            raise TransferError("Claim response unavailable")
         return {"jobId": self.job_id, "leaseId": self.lease}
 
     def command(self, job_id, action, payload):
@@ -32,6 +38,8 @@ class Backend:
         if action == "claim":
             return {"leaseId": self.lease, "extension": ".mp4", "transfer": {}}
         if action == "heartbeat":
+            if self.fail_heartbeat:
+                raise TransferError("Heartbeat unavailable")
             return {"leaseExpiresAt": "2026-11-19T12:00:00Z"}
         if action == "result-upload":
             return {"sizeBytes": payload["sizeBytes"]}
@@ -39,11 +47,15 @@ class Backend:
             if self.fail_completion:
                 raise TransferError("Completion unavailable")
             return {"status": "RESULT_READY"}
-        if action == "processing-failed":
-            return {"status": "FAILED"}
+        if action in {"input-failed", "processing-failed"}:
+            if self.fail_failure_report:
+                raise TransferError("Failure report unavailable")
+            return {"status": "QUEUED" if payload["retryable"] else "FAILED"}
         raise AssertionError(f"Unexpected action: {action}")
 
     def download(self, grant, target):
+        if self.fail_download:
+            raise TransferError("Download unavailable")
         target.write_bytes(b"video")
 
     def upload(self, grant, path):
@@ -81,7 +93,8 @@ class ProcessNextTests(unittest.TestCase):
             job_dir = work_dir / backend.job_id
             job_dir.mkdir()
             (job_dir / "room.ply").write_bytes(b"old result")
-            run(process_args(work_dir, write_result_command()), backend)
+            result = process_next(process_args(work_dir, write_result_command()), backend)
+            self.assertEqual(result, ProcessNextResult.COMPLETED)
             expected = job_dir / "attempts" / backend.lease / "room.ply"
             self.assertEqual(backend.uploaded, (expected, b"ply\nend_header\n"))
             self.assertEqual((job_dir / "lease").read_text(encoding="ascii"), backend.lease)
@@ -122,23 +135,26 @@ class ProcessNextTests(unittest.TestCase):
                 return None
 
         with TemporaryDirectory() as temporary:
-            run(process_args(Path(temporary), ["missing-processor"]), EmptyBackend())
+            result = process_next(process_args(Path(temporary), ["missing-processor"]), EmptyBackend())
+            self.assertEqual(result, ProcessNextResult.NO_JOB)
             self.assertEqual([path for path in Path(temporary).iterdir() if path.is_dir()], [])
 
     def test_missing_result_reports_processing_failure_before_upload(self):
         backend = Backend()
         with TemporaryDirectory() as temporary:
-            with self.assertRaisesRegex(TransferError, "must be a PLY"):
+            with self.assertRaisesRegex(ReportedJobFailure, "must be a PLY") as caught:
                 run(process_args(Path(temporary), [sys.executable, "-c", "pass"]), backend)
+        self.assertEqual(caught.exception.status, "FAILED")
         self.assertEqual([action for action, _ in backend.actions],
                          ["claim", "heartbeat", "processing-failed"])
 
     def test_nonzero_processor_exit_reports_retryable_failure(self):
         backend = Backend()
         with TemporaryDirectory() as temporary:
-            with self.assertRaisesRegex(TransferError, "exited with code 7"):
+            with self.assertRaisesRegex(ReportedJobFailure, "exited with code 7") as caught:
                 run(process_args(Path(temporary),
                                  [sys.executable, "-c", "import sys; sys.exit(7)"], retryable=True), backend)
+        self.assertEqual(caught.exception.status, "QUEUED")
         self.assertEqual([action for action, _ in backend.actions],
                          ["claim", "heartbeat", "processing-failed"])
         self.assertEqual(backend.actions[-1][1], {"leaseId": backend.lease, "retryable": True})
@@ -146,7 +162,7 @@ class ProcessNextTests(unittest.TestCase):
     def test_processor_start_failure_is_reported(self):
         backend = Backend()
         with TemporaryDirectory() as temporary:
-            with self.assertRaisesRegex(TransferError, "Could not start"):
+            with self.assertRaisesRegex(ReportedJobFailure, "Could not start"):
                 run(process_args(Path(temporary), ["missing-processor"]), backend)
         self.assertEqual([action for action, _ in backend.actions],
                          ["claim", "heartbeat", "processing-failed"])
@@ -157,8 +173,9 @@ class ProcessNextTests(unittest.TestCase):
         backend.fail_upload = True
         with TemporaryDirectory() as temporary:
             work_dir = Path(temporary)
-            with self.assertRaisesRegex(TransferError, "retry upload"):
+            with self.assertRaisesRegex(TransferError, "retry upload") as caught:
                 run(process_args(work_dir, write_result_command()), backend)
+            self.assertNotIsInstance(caught.exception, ReportedJobFailure)
             self.assertEqual((work_dir / backend.job_id / "lease").read_text(encoding="ascii"), backend.lease)
             self.assertTrue((work_dir / backend.job_id / "attempts" / backend.lease / "room.ply").is_file())
         self.assertEqual([action for action, _ in backend.actions],
@@ -169,11 +186,50 @@ class ProcessNextTests(unittest.TestCase):
         backend.fail_completion = True
         with TemporaryDirectory() as temporary:
             work_dir = Path(temporary)
-            with self.assertRaisesRegex(TransferError, "retry complete"):
+            with self.assertRaisesRegex(TransferError, "retry complete") as caught:
                 run(process_args(work_dir, write_result_command()), backend)
+            self.assertNotIsInstance(caught.exception, ReportedJobFailure)
             self.assertEqual((work_dir / backend.job_id / "lease").read_text(encoding="ascii"), backend.lease)
         self.assertEqual([action for action, _ in backend.actions],
                          ["claim", "heartbeat", "result-upload", "result-complete"])
+
+    def test_input_failure_is_reported_before_continuing(self):
+        backend = Backend()
+        backend.fail_download = True
+        with TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ReportedJobFailure, "Download unavailable") as caught:
+                process_next(process_args(Path(temporary), write_result_command()), backend)
+        self.assertEqual((caught.exception.job_id, caught.exception.status), (backend.job_id, "QUEUED"))
+        self.assertEqual([action for action, _ in backend.actions], ["claim", "input-failed"])
+
+    def test_unconfirmed_failure_report_is_not_safe_to_continue(self):
+        backend = Backend()
+        backend.fail_download = True
+        backend.fail_failure_report = True
+        with TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(TransferError, "did not confirm") as caught:
+                process_next(process_args(Path(temporary), write_result_command()), backend)
+        self.assertNotIsInstance(caught.exception, ReportedJobFailure)
+        self.assertEqual([action for action, _ in backend.actions], ["claim", "input-failed"])
+
+    def test_unconfirmed_heartbeat_is_not_safe_to_continue(self):
+        backend = Backend()
+        backend.fail_heartbeat = True
+        with TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(TransferError, "Heartbeat unavailable") as caught:
+                process_next(process_args(Path(temporary), write_result_command()), backend)
+        self.assertNotIsInstance(caught.exception, ReportedJobFailure)
+        self.assertEqual([action for action, _ in backend.actions], ["claim", "heartbeat"])
+
+    def test_unconfirmed_claim_response_is_not_safe_to_continue(self):
+        backend = Backend()
+        backend.fail_claim = True
+        with TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(TransferError, "Claim response unavailable") as caught:
+                process_next(process_args(Path(temporary), write_result_command()), backend)
+        self.assertNotIsInstance(caught.exception, ReportedJobFailure)
+        self.assertEqual(backend.claim_next_calls, 1)
+        self.assertEqual(backend.actions, [])
 
 
 if __name__ == "__main__":

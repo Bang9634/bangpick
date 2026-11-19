@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from bangpick_worker.__main__ import run
+from bangpick_worker.__main__ import ReportedJobFailure, run
 from bangpick_worker.supervisor import ProcessStartError
 from bangpick_worker.transfers import PermanentTransferError, TransferError
 
@@ -65,8 +65,9 @@ class DownloadNextTests(unittest.TestCase):
         backend = FailingBackend()
         with TemporaryDirectory() as temporary:
             work_dir = Path(temporary)
-            with self.assertRaisesRegex(TransferError, "did not confirm the failure"):
+            with self.assertRaisesRegex(TransferError, "did not confirm the failure") as caught:
                 run(Namespace(action="download-next", work_dir=work_dir), backend)
+            self.assertNotIsInstance(caught.exception, ReportedJobFailure)
             self.assertEqual((work_dir / str(job_id) / "lease").read_text(encoding="ascii"), str(lease_id))
         self.assertEqual(backend.actions, ["claim", "input-failed"])
 
@@ -88,8 +89,9 @@ class DownloadNextTests(unittest.TestCase):
         backend = WorkerBackend()
         with TemporaryDirectory() as temporary:
             with patch("bangpick_worker.__main__.save_lease", side_effect=OSError("Disk full")):
-                with self.assertRaisesRegex(OSError, "Disk full"):
+                with self.assertRaisesRegex(ReportedJobFailure, f"job {job_id}") as caught:
                     run(Namespace(action="download-next", work_dir=Path(temporary)), backend)
+        self.assertEqual(caught.exception.status, "QUEUED")
         self.assertEqual(backend.report, (str(job_id), "input-failed",
                                           {"leaseId": str(lease_id), "retryable": True}))
 
@@ -133,8 +135,9 @@ class DownloadNextTests(unittest.TestCase):
                         raise error
 
                 backend = FailingDownload()
-                with self.assertRaises(TransferError):
+                with self.assertRaises(ReportedJobFailure) as caught:
                     run(Namespace(action="download-next", work_dir=Path(temporary)), backend)
+                self.assertEqual(caught.exception.status, "QUEUED" if retryable else "FAILED")
                 self.assertEqual(backend.report,
                                  (str(job_id), {"leaseId": str(lease_id), "retryable": retryable}))
 
