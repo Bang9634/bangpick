@@ -17,8 +17,8 @@ export async function loadAccount(signal: AbortSignal): Promise<Account> {
   return { loginPath, member: await response.json() as Member }
 }
 
-export async function getAdminAccessStatus(): Promise<number> {
-  const response = await fetch('/api/admin/access', { cache: 'no-store' })
+export async function getAdminAccessStatus(signal?: AbortSignal): Promise<number> {
+  const response = await fetch('/api/admin/access', { signal, cache: 'no-store' })
   return response.status
 }
 

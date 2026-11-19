@@ -22,20 +22,27 @@ const adminStatusText: Partial<Record<number, string>> = {
   204: '관리자 접근 허용',
 }
 
+const adminAccessTimeoutMs = 5_000
+
 function AdminAccessCheck({ disabled }: { disabled: boolean }) {
   const [status, setStatus] = useState<number | null>(null)
   const [checking, setChecking] = useState(false)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState('')
 
   async function checkAccess() {
     setStatus(null)
-    setError(false)
+    setError('')
     setChecking(true)
+    const request = new AbortController()
+    const timeout = window.setTimeout(() => request.abort(), adminAccessTimeoutMs)
     try {
-      setStatus(await getAdminAccessStatus())
+      setStatus(await getAdminAccessStatus(request.signal))
     } catch {
-      setError(true)
+      setError(request.signal.aborted
+        ? '관리자 접근 요청 시간이 초과됐습니다. 다시 시도하세요.'
+        : '관리자 접근 요청을 보내지 못했습니다.')
     } finally {
+      window.clearTimeout(timeout)
       setChecking(false)
     }
   }
@@ -50,7 +57,7 @@ function AdminAccessCheck({ disabled }: { disabled: boolean }) {
       <p role="status">
         {checking && '확인 중…'}
         {status !== null && `HTTP ${status} · ${adminStatusText[status] ?? '예상 외 응답'}`}
-        {error && '관리자 접근 요청을 보내지 못했습니다.'}
+        {error}
       </p>
     </section>
   )
