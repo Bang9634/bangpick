@@ -20,6 +20,7 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 .venv/bin/bangpick-worker process-next --work-dir ../outputs/worker -- python /path/to/processor.py
 .venv/bin/bangpick-worker work-loop --work-dir ../outputs/worker -- python /path/to/processor.py
 .venv/bin/bangpick-worker download <job-id> --work-dir ../outputs/worker
+.venv/bin/bangpick-worker download <job-id> --work-dir ../outputs/worker --new-lease
 .venv/bin/bangpick-worker heartbeat <job-id> --work-dir ../outputs/worker
 .venv/bin/bangpick-worker run-process <job-id> --work-dir ../outputs/worker -- python /path/to/processor.py
 .venv/bin/bangpick-worker processing-failed <job-id> --work-dir ../outputs/worker
@@ -36,9 +37,9 @@ Worker 실행 환경에 `BANGPICK_API_URL`과 `BANGPICK_MEDIA_WORKER_TOKEN`을 �
 
 `download-next`에서 로컬 점유 파일 기록, 입력 URL 요청 또는 원본 다운로드가 실패하면 점유 ID로 `input-failed`를 보고합니다. 일시 오류는 백엔드가 30초·60초 뒤 재시도하도록 대기시키고, 세 번째 실패나 다시 받아도 해결되지 않는 응답 오류는 `FAILED`로 기록합니다. 이때 명령은 오류로 종료합니다. `QUEUED`로 돌아간 작업은 대기 시간이 지난 뒤 `download-next`로 다시 가져올 수 있습니다. 입력 URL 요청·다운로드 후 실패 보고까지 실패했다면 점유 파일을 보존하므로 출력된 작업 ID로 `download <job-id> --work-dir ...`를 재시도할 수 있습니다. 점유 파일 기록 자체가 실패하고 실패 보고도 확인되지 않았다면 출력된 작업 ID로 백엔드 상태를 확인하고, 이전 실행이 없는 것을 확인한 뒤 만료 작업 수동 복구 절차를 따릅니다. 작업 ID를 직접 지정한 `download` 명령은 자동 실패 보고를 하지 않습니다.
 
-`lease` 파일에는 마지막으로 받은 점유 ID가 남습니다. 실패 보고 후에는 그 ID가 더 이상 유효하지 않으며, 작업을 다시 점유하면 새 ID로 덮어씁니다.
+`lease` 파일에는 마지막으로 받은 점유 ID가 남습니다. 일반 `download <job-id>`는 이 ID로 현재 점유의 원본 읽기 URL을 다시 요청합니다. 실패 보고로 작업이 `QUEUED`로 돌아간 뒤에는 이전 ID로 요청하면 `409`를 받습니다. 재시도 대기 시간이 지났고 이전 실행이 끝났다면 `download <job-id> --new-lease`로 해당 작업의 새 점유를 명시적으로 요청할 수 있습니다. 이 명령은 기존 파일의 ID 대신 `leaseId: null`을 보내고, 새 점유가 성공하면 파일을 새 ID로 덮어씁니다. 작업이 아직 대기 중이 아니거나 재시도 시각 전이면 백엔드가 거부하며 기존 점유 파일은 유지됩니다. 작업 ID를 직접 지정하는 수동 점유에는 대기열 순서가 적용되지 않습니다.
 
-만료된 `PROCESSING` 작업은 `download <job-id>`로도 새 점유를 받을 수 없습니다. 이전 실행의 종료를 확인한 운영자가 [백엔드의 수동 복구 절차](../backend/README.md#만료-작업-수동-복구)를 수행해야 합니다. Worker 토큰으로 복구 API를 호출할 수 없습니다.
+만료된 `PROCESSING` 작업은 `--new-lease`로도 새 점유를 받을 수 없습니다. 이전 실행의 종료를 확인한 운영자가 [백엔드의 수동 복구 절차](../backend/README.md#만료-작업-수동-복구)를 수행해야 합니다. Worker 토큰으로 복구 API를 호출할 수 없습니다.
 
 `heartbeat`는 저장된 점유 ID로 백엔드에 한 번 갱신을 요청하고 새 만료 시각을 출력합니다. 이미 만료된 점유는 갱신할 수 없습니다.
 

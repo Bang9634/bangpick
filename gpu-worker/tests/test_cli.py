@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from bangpick_worker.__main__ import ReportedJobFailure, run
+from bangpick_worker.__main__ import ReportedJobFailure, main, run
 from bangpick_worker.supervisor import ProcessStartError
 from bangpick_worker.transfers import PermanentTransferError, TransferError
 
@@ -140,6 +140,73 @@ class DownloadNextTests(unittest.TestCase):
                 self.assertEqual(caught.exception.status, "QUEUED" if retryable else "FAILED")
                 self.assertEqual(backend.report,
                                  (str(job_id), {"leaseId": str(lease_id), "retryable": retryable}))
+
+
+class ManualDownloadTests(unittest.TestCase):
+    def test_stale_lease_is_rejected_but_new_lease_flag_claims_again(self):
+        job_id = uuid4()
+        old_lease = uuid4()
+        new_lease = uuid4()
+
+        class WorkerBackend:
+            def __init__(self):
+                self.requests = []
+
+            def command(self, actual_job_id, action, payload):
+                self.requests.append((actual_job_id, action, payload))
+                if payload["leaseId"] == str(old_lease):
+                    raise TransferError("Backend failed (HTTP 409)")
+                return {"leaseId": str(new_lease), "extension": ".mp4", "transfer": {}}
+
+            def download(self, grant, target):
+                target.write_bytes(b"retried video")
+
+        backend = WorkerBackend()
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            lease_file = job_dir / "lease"
+            lease_file.write_text(str(old_lease), encoding="ascii")
+
+            with self.assertRaisesRegex(TransferError, "HTTP 409"):
+                run(Namespace(action="download", job_id=job_id, work_dir=work_dir,
+                              new_lease=False), backend)
+            self.assertEqual(lease_file.read_text(encoding="ascii"), str(old_lease))
+
+            argv = ["bangpick-worker", "download", str(job_id), "--work-dir", str(work_dir), "--new-lease"]
+            with patch("sys.argv", argv), patch("bangpick_worker.__main__.Transfers", return_value=backend):
+                main()
+            self.assertEqual(lease_file.read_text(encoding="ascii"), str(new_lease))
+            self.assertEqual((job_dir / "source.mp4").read_bytes(), b"retried video")
+
+        self.assertEqual(backend.requests, [
+            (str(job_id), "claim", {"leaseId": str(old_lease)}),
+            (str(job_id), "claim", {"leaseId": None}),
+        ])
+
+    def test_new_lease_rejection_keeps_the_previous_lease_file(self):
+        job_id = uuid4()
+        old_lease = uuid4()
+
+        class UnavailableJob:
+            def command(self, actual_job_id, action, payload):
+                self.request = (actual_job_id, action, payload)
+                raise TransferError("Backend failed (HTTP 409)")
+
+        backend = UnavailableJob()
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            job_dir = work_dir / str(job_id)
+            job_dir.mkdir()
+            lease_file = job_dir / "lease"
+            lease_file.write_text(str(old_lease), encoding="ascii")
+
+            with self.assertRaisesRegex(TransferError, "HTTP 409"):
+                run(Namespace(action="download", job_id=job_id, work_dir=work_dir,
+                              new_lease=True), backend)
+            self.assertEqual(lease_file.read_text(encoding="ascii"), str(old_lease))
+        self.assertEqual(backend.request, (str(job_id), "claim", {"leaseId": None}))
 
 
 class HeartbeatTests(unittest.TestCase):

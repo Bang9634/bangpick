@@ -224,7 +224,10 @@ def run(args: argparse.Namespace, transfers: Transfers) -> None:
     job_id = str(args.job_id)
     directory = args.work_dir / job_id
     lease_file = directory / "lease"
-    lease = str(UUID(lease_file.read_text(encoding="ascii").strip())) if lease_file.exists() else None
+    # A manual retry can explicitly start a new attempt even when an old lease file remains.
+    new_lease = args.action == "download" and getattr(args, "new_lease", False)
+    lease = (str(UUID(lease_file.read_text(encoding="ascii").strip()))
+             if lease_file.exists() and not new_lease else None)
     if args.action == "download":
         with local_processing_slot(args.work_dir):
             download_assigned(job_id, lease, directory, transfers, False)
@@ -277,6 +280,9 @@ def main() -> None:
         command.add_argument("--work-dir", required=True, type=Path)
         if action == "upload":
             command.add_argument("ply", type=Path)
+        if action == "download":
+            command.add_argument("--new-lease", action="store_true",
+                                 help="Claim a queued job again and replace the saved lease")
         if action in {"run-process", "process-next", "work-loop", "processing-failed"}:
             command.add_argument("--retryable", action="store_true",
                                  help="Retry a failed attempt, up to three total attempts")
