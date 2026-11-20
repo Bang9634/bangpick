@@ -1,0 +1,3 @@
+ALTER TABLE media_jobs ADD COLUMN queued_at BIGINT NULL;
+ALTER TABLE media_jobs ADD COLUMN available_at BIGINT NULL;
+ALTER TABLE media_jobs ADD COLUMN attempt_count INT NOT NULL DEFAULT 0;

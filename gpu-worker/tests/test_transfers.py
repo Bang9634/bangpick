@@ -1,9 +1,10 @@
 from io import BytesIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from bangpick_worker.transfers import TransferError, Transfers
+from bangpick_worker.transfers import PermanentTransferError, TransferError, Transfers
 
 
 class FixtureOpener:
@@ -21,6 +22,22 @@ class FixtureOpener:
         return BytesIO(self.body)
 
 
+class BackendResponse(BytesIO):
+    def __init__(self, status, body=b""):
+        super().__init__(body)
+        self.status = status
+
+
+class QueueOpener:
+    def __init__(self, response):
+        self.response = response
+        self.request = None
+
+    def open(self, request, timeout):
+        self.request = request
+        return self.response
+
+
 class TransferTests(unittest.TestCase):
     def setUp(self):
         self.client = Transfers("http://127.0.0.1:8080/api", "t" * 32)
@@ -28,6 +45,19 @@ class TransferTests(unittest.TestCase):
 
     def grant(self, method, size):
         return {"method": method, "sizeBytes": size, "url": self.url}
+
+    def test_claim_next_returns_none_for_empty_queue_and_reads_job_when_available(self):
+        empty = QueueOpener(BackendResponse(204))
+        self.client.opener = empty
+        self.assertIsNone(self.client.claim_next())
+        self.assertEqual(empty.request.full_url, "http://127.0.0.1:8080/api/internal/media/jobs/claim-next")
+        self.assertEqual(empty.request.get_method(), "POST")
+        self.assertEqual(empty.request.get_header("Authorization"), "Bearer " + "t" * 32)
+
+        job = {"jobId": "job", "leaseId": "lease"}
+        available = QueueOpener(BackendResponse(200, json.dumps(job).encode()))
+        self.client.opener = available
+        self.assertEqual(self.client.claim_next(), job)
 
     def test_download_requires_exact_size_before_replacing_file(self):
         with TemporaryDirectory() as directory:
@@ -57,6 +87,6 @@ class TransferTests(unittest.TestCase):
         with self.assertRaises(TransferError):
             Transfers("http://backend.example.test/api", "t" * 32)
         with TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(TransferError, "Invalid object transfer grant"):
+            with self.assertRaisesRegex(PermanentTransferError, "Invalid object transfer grant"):
                 self.client.download({"method": "GET", "sizeBytes": 3, "url": "http://storage.example.test/key"},
                                      Path(directory) / "video")
