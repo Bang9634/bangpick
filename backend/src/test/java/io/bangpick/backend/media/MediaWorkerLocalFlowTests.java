@@ -2,9 +2,11 @@ package io.bangpick.backend.media;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.oracle.bmc.objectstorage.ObjectStorageClient;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import io.bangpick.backend.BangpickBackendApplication;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -28,44 +30,41 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /** Opt-in flow through the real backend API and Python Worker with a local HTTPS object store. */
 @EnabledIfEnvironmentVariable(named = "BANGPICK_WORKER_E2E_PYTHON", matches = ".+")
-@SpringBootTest(classes = MediaWorkerLocalFlowTests.TestApplication.class,
+@SpringBootTest(classes = BangpickBackendApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "bangpick.media.enabled=true", "spring.flyway.enabled=true",
+        "bangpick.auth.enabled=false",
+        "bangpick.media.dev-token=" + MediaWorkerLocalFlowTests.OWNER,
+        "bangpick.media.worker-token=" + MediaWorkerLocalFlowTests.WORKER,
         "spring.datasource.url=jdbc:h2:mem:mediaworkerflow;MODE=MySQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa", "spring.datasource.password="
 })
+@Import(MediaWorkerLocalFlowTests.StorageConfiguration.class)
 class MediaWorkerLocalFlowTests {
-    private static final String OWNER = "example-development-token-for-tests-123";
-    private static final String WORKER = "example-worker-token-for-tests-456";
+    static final String OWNER = "example-development-token-for-tests-123";
+    static final String WORKER = "example-worker-token-for-tests-456";
     private static final byte[] INPUT = "synthetic-transfer-input".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
     private static final byte[] PLY = "ply\nformat ascii 1.0\nend_header\n"
             .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
 
-    @Configuration(proxyBeanMethods = false)
-    @EnableAutoConfiguration
-    @Import(MediaController.class)
-    static class TestApplication {
-        @Bean MediaAccess access() { return new MediaAccess(OWNER, WORKER, null); }
-        @Bean(destroyMethod = "close") LocalObjectStore storage() throws Exception { return new LocalObjectStore(); }
-        @Bean MediaJobRepository repository(JdbcTemplate jdbc) { return new MediaJobRepository(jdbc); }
-        @Bean MediaJobs jobs(MediaJobRepository repository, MediaStorage storage) {
-            return new MediaJobs(repository, storage);
-        }
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+    static class StorageConfiguration {
+        @Bean @org.springframework.context.annotation.Primary
+        LocalObjectStore storage() throws Exception { return new LocalObjectStore(); }
     }
 
+    @MockitoBean ObjectStorageClient ociClient;
     @LocalServerPort int port;
     @Autowired LocalObjectStore storage;
     @TempDir Path workDir;

@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.HttpStatus.CONFLICT;
 import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
+import com.oracle.bmc.objectstorage.ObjectStorageClient;
+import io.bangpick.backend.BangpickBackendApplication;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -17,36 +19,37 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest(classes = MediaTransferTests.TestApplication.class,
+@SpringBootTest(classes = BangpickBackendApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "bangpick.media.enabled=true", "spring.flyway.enabled=true",
+        "bangpick.auth.enabled=false",
+        "bangpick.media.dev-token=" + MediaTransferTests.OWNER,
+        "bangpick.media.worker-token=" + MediaTransferTests.WORKER,
+        "bangpick.media.recovery-token=" + MediaTransferTests.RECOVERY,
         "spring.datasource.url=jdbc:h2:mem:mediaflow;MODE=MySQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa", "spring.datasource.password="
 })
+@Import(MediaTransferTests.StorageConfiguration.class)
 class MediaTransferTests {
-    private static final String OWNER = "example-development-token-for-tests-123";
-    private static final String WORKER = "example-worker-token-for-tests-456";
-    private static final String RECOVERY = "example-recovery-token-for-tests-789";
+    static final String OWNER = "example-development-token-for-tests-123";
+    static final String WORKER = "example-worker-token-for-tests-456";
+    static final String RECOVERY = "example-recovery-token-for-tests-789";
 
-    @Configuration(proxyBeanMethods = false)
-    @EnableAutoConfiguration
-    @Import(MediaController.class)
-    static class TestApplication {
-        @Bean MediaAccess access() { return new MediaAccess(OWNER, WORKER, RECOVERY); }
-        @Bean FakeStorage storage() { return new FakeStorage(); }
-        @Bean MediaJobRepository repository(JdbcTemplate jdbc) { return new MediaJobRepository(jdbc); }
-        @Bean MediaJobs jobs(MediaJobRepository repository, MediaStorage storage) { return new MediaJobs(repository, storage); }
+    @TestConfiguration(proxyBeanMethods = false)
+    static class StorageConfiguration {
+        @Bean @Primary FakeStorage storage() { return new FakeStorage(); }
     }
 
     static class FakeStorage implements MediaStorage {
@@ -80,6 +83,7 @@ class MediaTransferTests {
     }
 
     @LocalServerPort int port;
+    @MockitoBean ObjectStorageClient ociClient;
     @Autowired FakeStorage storage;
     @Autowired JdbcTemplate jdbc;
     @Autowired MediaJobs jobs;
@@ -88,12 +92,12 @@ class MediaTransferTests {
 
     @Test
     void recoveryTokenCanBeDisabledButCannotReuseAnotherRole() {
-        var disabled = new MediaAccess(OWNER, WORKER, null);
+        var disabled = new MediaAccess(false, OWNER, WORKER, null);
         var denied = org.junit.jupiter.api.Assertions.assertThrows(ResponseStatusException.class,
                 () -> disabled.requireRecovery("Bearer " + RECOVERY));
         assertThat(denied.getStatusCode()).isEqualTo(UNAUTHORIZED);
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
-                () -> new MediaAccess(OWNER, WORKER, WORKER));
+                () -> new MediaAccess(false, OWNER, WORKER, WORKER));
     }
 
     @Test

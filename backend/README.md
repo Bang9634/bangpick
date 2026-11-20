@@ -9,6 +9,35 @@ Java 21과 Maven Wrapper로 실행합니다. Windows에서는 `mvnw.cmd`를 사�
 
 개별 실행 시 기본 DB는 `localhost:13306/bangpick`입니다. `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`는 셸·IDE 환경에서 지정하세요. JVM은 저장소 루트의 `.env`를 자동으로 읽지 않습니다. DB는 [인프라 안내](../infra/README.md)대로 기동하며, 상태는 `http://127.0.0.1:8080/api/actuator/health`에서 확인합니다.
 
+## Google 로그인 개발 환경
+
+1. Google Auth Platform에서 **웹 애플리케이션** 유형의 OAuth 클라이언트를 만듭니다. Vite와 Docker Compose의 기본 웹 주소는 모두 `http://localhost:8088`이므로, 승인된 리디렉션 URI에 `http://localhost:8088/api/login/oauth2/code/google`을 등록합니다. 동의 화면을 테스트 모드로 운영하는 경우 로그인할 Google 계정을 테스트 사용자에 추가합니다. [Google OAuth 설정](https://developers.google.com/identity/protocols/oauth2/web-server)
+
+2. [`.env.example`](../.env.example)을 참고해 `BANGPICK_AUTH_ENABLED=true`, `BANGPICK_WEB_ORIGIN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`을 설정합니다. Compose는 값을 백엔드에 전달합니다. Maven으로 실행할 때는 아래 OCI 실행 예시처럼 먼저 `.env`를 셸에 불러옵니다. 배포 환경에서는 실제 HTTPS 웹 주소를 사용합니다.
+3. 설정한 브라우저 주소로 접속해 **Google로 로그인**을 누릅니다. 로그인 후 `/api/me`에서 내부 회원 ID와 역할을 확인할 수 있습니다.
+
+### 첫 관리자 지정
+
+지정할 팀원이 먼저 Google로 로그인한 뒤, 해당 팀원의 `/api/me` 응답에서 확인한 내부 회원 ID를 사용해 운영자가 DB에서 권한을 부여합니다.
+
+```sql
+UPDATE members SET role = 'ADMIN' WHERE id = '<내부 회원 ID>';
+```
+
+관리자 계정은 `/api/admin/access`에서 `204`를 받고, 로그인한 일반 회원은 `403`을 받습니다. 권한을 회수하려면 같은 ID의 역할을 `USER`로 바꿉니다. 이미 로그인한 세션에도 다음 요청부터 적용됩니다.
+
+## 기존 DB에 작업 대기열 마이그레이션 적용 전
+
+V1 또는 V2 스키마를 사용하던 DB를 큐 V3~V5로 올리기 전에 아래 조회로 기존 실행 중 작업을 확인합니다. 새 DB에서 시작한다면 해당하지 않습니다.
+
+```sql
+SELECT COUNT(*) AS processing_jobs FROM media_jobs WHERE status = 'PROCESSING';
+```
+
+`0`건이면 이 제약 없이 마이그레이션을 진행할 수 있습니다. 기존 `PROCESSING` 행이 있으면 V3에서 `attempt_count=0`으로 채워지지만 현재 `recover-expired`는 1회 이상 점유한 작업만 복구하므로, 해당 행은 점유가 만료돼도 API로 복구할 수 없습니다. 이 경우 기존 실행과 결과의 상태를 확인하고 해당 작업의 처리 방안을 정한 뒤 마이그레이션을 적용합니다. 기존 GPU 실행의 종료를 확인하지 않은 채 시도 횟수만 임의로 바꾸거나 작업을 재실행하지 않습니다. 적용 대상 DB의 기존 행 유무는 별도로 확인해야 합니다.
+
+기존 공유 DB에 이 PR의 옛 큐 V2~V4를 이미 적용했다면 파일명을 바꾸기 전에 `flyway_schema_history`의 적용 버전과 파일명을 확인해야 합니다. 적용 이력을 확인하지 않고 V3~V5를 실행하지 않습니다.
+
 ## MySQL 작업 대기열 테스트
 
 기본 `verify`는 H2 기반 테스트를 실행합니다. 실제 MySQL의 `FOR UPDATE SKIP LOCKED`와 만료 작업 수동 복구는 별도의 로컬 `bangpick_queue_test` DB에서만 테스트합니다. 테스트는 Flyway 마이그레이션을 적용하고 자신이 만든 작업 행을 삭제합니다. 개발용 `bangpick` DB나 공유 DB를 테스트 URL로 지정하지 마세요.
@@ -46,7 +75,7 @@ URL이 로컬 `bangpick_queue_test` DB를 가리키지 않으면 테스트는 �
 | 변수 | 개발 예시 |
 | --- | --- |
 | `BANGPICK_MEDIA_ENABLED` | `true` — 기본값은 `false` |
-| `BANGPICK_MEDIA_DEV_TOKEN` | 브라우저에서 입력하는 개발 토큰. `openssl rand -hex 32`로 생성 |
+| `BANGPICK_MEDIA_DEV_TOKEN` | Google 로그인이 꺼진 로컬 환경에서 사용하는 브라우저 개발 토큰. `openssl rand -hex 32`로 생성 |
 | `BANGPICK_MEDIA_WORKER_TOKEN` | Worker용 토큰. 위와 별도로 한 번 더 생성 |
 | `BANGPICK_MEDIA_RECOVERY_TOKEN` | 선택 사항. 이전 실행 중단을 확인한 운영자의 만료 작업 복구 전용 토큰. 다른 두 토큰과 별도로 생성 |
 | `OCI_CONFIG_FILE` | OCI SDK 설정 파일의 절대 경로 |
@@ -65,7 +94,7 @@ cd backend
 ./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.address=127.0.0.1
 ```
 
-기능이 켜지면 Flyway가 `media_jobs` 테이블을 생성합니다. 위 실행 예시는 백엔드를 루프백에 바인딩합니다. 다른 환경에서 실제 팀 Worker가 연결할 때는 HTTPS 또는 보호된 터널을 사용합니다. 개발 토큰은 단일 개발 소유자 식별용이므로 이 기능을 현재 상태로 인터넷에 공개하지 않습니다.
+Flyway는 백엔드 시작 시 회원·작업 테이블의 마이그레이션을 적용합니다. 위 실행 예시는 백엔드를 루프백에 바인딩합니다. 다른 환경에서 실제 팀 Worker가 연결할 때는 HTTPS 또는 보호된 터널을 사용합니다. 브라우저 개발 토큰은 로컬 테스트용입니다. Google 로그인을 켜면 브라우저 작업은 회원 ID로 구분되며 이전 개발 토큰으로 생성한 작업은 개발 모드에서 조회할 수 있습니다.
 
 브라우저는 [프론트 실행 안내](../frontend/README.md), 파일 다운로드·결과 업로드는 [Worker 실행 안내](../gpu-worker/README.md), API는 [서비스 간 계약](../contracts/README.md)을 참고하세요.
 

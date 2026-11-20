@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.http.HttpStatus.CONFLICT;
 
+import com.oracle.bmc.objectstorage.ObjectStorageClient;
+import io.bangpick.backend.BangpickBackendApplication;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -18,20 +20,28 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Runs only when the configured URL names a local bangpick_queue_test database. */
 @EnabledIfEnvironmentVariable(named = "BANGPICK_QUEUE_TEST_MYSQL_URL",
         matches = "jdbc:mysql://(127\\.0\\.0\\.1|localhost):[0-9]+/bangpick_queue_test")
-@SpringBootTest(classes = MediaTransferTests.TestApplication.class,
+@SpringBootTest(classes = BangpickBackendApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "bangpick.media.enabled=true", "spring.flyway.enabled=true",
+        "bangpick.auth.enabled=false",
+        "bangpick.media.dev-token=" + MediaTransferTests.OWNER,
+        "bangpick.media.worker-token=" + MediaTransferTests.WORKER,
+        "bangpick.media.recovery-token=" + MediaTransferTests.RECOVERY,
         "spring.datasource.url=${BANGPICK_QUEUE_TEST_MYSQL_URL}",
         "spring.datasource.username=${BANGPICK_QUEUE_TEST_MYSQL_USER}",
         "spring.datasource.password=${BANGPICK_QUEUE_TEST_MYSQL_PASSWORD}"
 })
+@Import(MediaTransferTests.StorageConfiguration.class)
 class MediaQueueMySqlRecoveryTests {
+    @MockitoBean ObjectStorageClient ociClient;
     private static final String RECOVERY_TOKEN = "example-recovery-token-for-tests-789";
 
     @LocalServerPort int port;

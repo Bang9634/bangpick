@@ -10,10 +10,28 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class MediaQueueMigrationTests {
     @Test
-    void existingQueuedRowsBecomeAvailableWithoutInventingATime() {
+    void existingMainV2QueuedRowsUpgradeThroughQueueMigrations() {
         String url = "jdbc:h2:mem:queue_" + UUID.randomUUID().toString().replace("-", "")
                 + ";MODE=MySQL;DB_CLOSE_DELAY=-1";
         Flyway.configure().dataSource(url, "sa", "").target("2").load().migrate();
+        JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(url, "sa", ""));
+        String id = insert(jdbc);
+
+        Flyway.configure().dataSource(url, "sa", "").load().migrate();
+
+        assertThat(jdbc.queryForObject("SELECT status FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("QUEUED");
+        assertThat(jdbc.queryForObject("SELECT queued_at FROM media_jobs WHERE id = ?", Long.class, id)).isZero();
+        assertThat(jdbc.queryForObject("SELECT available_at FROM media_jobs WHERE id = ?", Long.class, id)).isZero();
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isZero();
+    }
+
+    @Test
+    void existingQueuedRowsBecomeAvailableWithoutInventingATime() {
+        String url = "jdbc:h2:mem:queue_" + UUID.randomUUID().toString().replace("-", "")
+                + ";MODE=MySQL;DB_CLOSE_DELAY=-1";
+        Flyway.configure().dataSource(url, "sa", "").target("3").load().migrate();
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(url, "sa", ""));
         String legacy = insert(jdbc);
         String timed = insert(jdbc);
