@@ -1,3 +1,5 @@
+"""가짜 스토리지 응답으로 파일 크기 검증과 토큰 전달 범위를 확인한다."""
+
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,6 +9,8 @@ from bangpick_worker.transfers import TransferError, Transfers
 
 
 class FixtureOpener:
+    """네트워크 요청에 응답하고 업로드된 바이트를 기록한다."""
+
     def __init__(self, body):
         self.body = body
         self.uploaded = None
@@ -58,5 +62,11 @@ class TransferTests(unittest.TestCase):
             Transfers("http://backend.example.test/api", "t" * 32)
         with TemporaryDirectory() as directory:
             with self.assertRaisesRegex(TransferError, "Invalid object transfer grant"):
-                self.client.download({"method": "GET", "sizeBytes": 3, "url": "http://storage.example.test/key"},
-                                     Path(directory) / "video")
+                self.client.download(
+                    {
+                        "method": "GET",
+                        "sizeBytes": 3,
+                        "url": "http://storage.example.test/key",
+                    },
+                    Path(directory) / "video",
+                )

@@ -6,7 +6,8 @@
 | --- | --- |
 | 프론트엔드 | Google 로그인·로그아웃 조작, 영상 전송·작업 조회 함수, Spark·Three.js 기반 PLY 뷰어 |
 | 백엔드 | 회원 세션·관리자 접근 제어, 회원별 영상·PLY 접근, 객체 크기 확인, MySQL 작업 상태와 결과 키 관리 |
-| GPU Worker | 지정 작업 점유, 원본 다운로드, 로컬 PLY 업로드와 완료 보고 |
+| GPU Worker | 지정 작업 점유, OCI 원본 다운로드와 프레임 추출, 로컬 PLY 업로드와 완료 보고 |
+
 | 로컬 인프라 | 웹·백엔드·MySQL Compose, Worker 별도 Compose와 GPU 할당 설정 |
 
 Google 로그인과 OCI 전송은 각각 설정을 켜서 사용합니다. 환경변수와 관리자 지정은 [백엔드 실행 안내](../backend/README.md#google-로그인-개발-환경), API 형식은 [서비스 간 계약](../contracts/README.md)에 있습니다.
@@ -17,7 +18,7 @@ Google 로그인과 OCI 전송은 각각 설정을 켜서 사용합니다. 환�
 | --- | --- | --- |
 | 프론트엔드 | React·TypeScript·Vite, Node.js 24 권장 | [프론트 설치·실행](../frontend/README.md) |
 | 백엔드 | Java 21·Spring Boot·Maven Wrapper | [백엔드 실행·DB 연결](../backend/README.md) |
-| Worker | Python 3.11 이상 | [Worker 전송 명령](../gpu-worker/README.md) |
+| Worker | Python 3.11 이상, 전처리에 FFmpeg 사용 | [Worker 명령](../gpu-worker/README.md) |
 | 컨테이너 | Docker·Compose v2.30 이상, MySQL 8.4 | [Docker와 GPU 설정](../infra/README.md) |
 
 컨테이너로만 실행할 때 호스트에 Node.js·Java·Python을 모두 설치할 필요는 없습니다. Worker 전송 테스트에는 GPU가 필요하지 않습니다. 실제 학습 환경은 [재구성 실험](experiments/0001-room-reconstruction.md)에 기록합니다.
