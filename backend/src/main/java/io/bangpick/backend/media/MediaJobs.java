@@ -114,6 +114,9 @@ class MediaJobs {
         if (job.status() != Status.QUEUED) {
             throw conflict("The job cannot be claimed");
         }
+        // leaseId가 있는 요청은 기존 점유의 URL 갱신 전용이다. 재대기 중인 작업에
+        // 이전 시도의 leaseId가 늦게 도착해도 새 실행을 시작해서는 안 된다.
+        if (currentLease != null) throw conflict("The worker lease is no longer active");
         if (job.attemptCount() >= MAX_ATTEMPTS) throw conflict("The job has reached its attempt limit");
         if (job.availableAt() == null || job.availableAt().isAfter(now)) {
             throw conflict("The job is not yet available");

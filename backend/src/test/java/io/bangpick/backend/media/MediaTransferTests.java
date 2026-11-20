@@ -385,6 +385,31 @@ class MediaTransferTests {
     }
 
     @Test
+    void staleLeaseCannotClaimQueuedRetryAfterBackoff() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        String firstLease = body(send(200, workerPath + "/claim", WORKER, Map.of()))
+                .path("leaseId").asText();
+        send(200, workerPath + "/input-failed", WORKER,
+                Map.of("leaseId", firstLease, "retryable", true));
+        jdbc.update("UPDATE media_jobs SET available_at = 0 WHERE id = ?", id);
+
+        send(409, workerPath + "/claim", WORKER, Map.of("leaseId", firstLease));
+        assertThat(jdbc.queryForObject("SELECT status FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("QUEUED");
+        assertThat(jdbc.queryForObject("SELECT lease_id FROM media_jobs WHERE id = ?", String.class, id))
+                .isNull();
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(1);
+
+        String secondLease = body(send(200, workerPath + "/claim", WORKER, Map.of()))
+                .path("leaseId").asText();
+        assertThat(secondLease).isNotEqualTo(firstLease);
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM media_jobs WHERE id = ?", Integer.class, id))
+                .isEqualTo(2);
+    }
+
+    @Test
     void permanentInputFailureStopsAfterOneAttempt() throws Exception {
         String id = queueVideo();
         String workerPath = "/internal/media/jobs/" + id;
