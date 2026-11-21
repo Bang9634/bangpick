@@ -13,6 +13,9 @@ from uuid import UUID
 from .transfers import CHUNK_SIZE, PermanentTransferError, TransferError, Transfers
 from .supervisor import ProcessStartError, local_processing_slot, renew_lease, supervise, supervise_in_slot
 
+from .preprocess import extract_frames
+from .colmap_poses import estimate_camera_poses
+from .train_3dgs import train_3dgs
 
 class ProcessNextResult(Enum):
     NO_JOB = "no_job"
@@ -140,6 +143,22 @@ def complete_result(job_id: str, lease: str, transfers: Transfers) -> None:
     if completed.get("status") != "RESULT_READY":
         raise TransferError("The backend did not confirm the result")
     print(f"Result recorded for job {job_id}")
+
+
+def build_3d_scene(input_video: Path, output_ply: Path) -> Path:
+    """영상에서 프레임을 추출하고 COLMAP로 촬영 위치와 방향을 추정한 뒤 3DGS로 학습하여 PLY 파일경로를 반환"""
+    if output_ply.exists():
+        raise FileExistsError(f"PLY 출력 파일이 이미 존재합니다: {output_ply}")
+    
+    attempt_dir = output_ply.parent
+    images_dir = attempt_dir / "images"
+    colmap_dir = attempt_dir / "colmap"
+    training_dir = attempt_dir / "3dgs"
+
+    extract_frames(input_video, images_dir)
+    model_dir = estimate_camera_poses(images_dir, colmap_dir)
+    generated_ply = train_3dgs(images_dir, model_dir, training_dir)
+    return generated_ply.rename(output_ply)
 
 
 def process_next(args: argparse.Namespace, transfers: Transfers) -> ProcessNextResult:
@@ -288,6 +307,9 @@ def main() -> None:
                                  help="Retry a failed attempt, up to three total attempts")
         if action in {"run-process", "process-next", "work-loop"}:
             command.epilog = "Put -- before the local processing command."
+    commands.add_parser("build-3d-scene", 
+                        help="Build a 3D scene from the input video and save the output PLY",)
+        
     argv = sys.argv[1:]
     if argv[:1] in (["run-process"], ["process-next"], ["work-loop"]):
         if "--" not in argv:
