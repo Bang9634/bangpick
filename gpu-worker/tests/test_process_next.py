@@ -1,4 +1,5 @@
 from argparse import Namespace
+from functools import partial
 import os
 from pathlib import Path
 import subprocess
@@ -105,6 +106,33 @@ class ProcessNextTests(unittest.TestCase):
         self.assertEqual(backend.claim_next_calls, 1)
         self.assertEqual([action for action, _ in backend.actions],
                          ["claim", "heartbeat", "result-upload", "result-complete"])
+
+    def test_build_3d_scene_reaches_preprocessing_and_reports_failure(self):
+        backend = Backend()
+        source_dir = Path(__file__).resolve().parents[1] / "src"
+        environment = {"PYTHONPATH": str(source_dir), "PYTHONIOENCODING": "utf-8"}
+        command = [sys.executable, "-m", "bangpick_worker", "build-3d-scene"]
+
+        with TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            attempt_dir = work_dir / backend.job_id / "attempts" / backend.lease
+            # 입력 영상 경로를 확인한 뒤 FFmpeg를 시작하기 전에 전처리가 실패하도록 한다.
+            (attempt_dir / "images").mkdir(parents=True)
+
+            stderr_path = work_dir / "child-stderr.txt"
+            with stderr_path.open("wb") as stderr, patch.dict(os.environ, environment):
+                start_child = partial(subprocess.Popen, stderr=stderr)
+                with patch("bangpick_worker.supervisor.subprocess.Popen", new=start_child):
+                    with self.assertRaises(ReportedJobFailure) as caught:
+                        process_next(process_args(work_dir, command), backend)
+
+            self.assertIn("프레임 출력 디렉터리가 이미 존재합니다", stderr_path.read_text(encoding="utf-8"))
+            self.assertFalse((attempt_dir / "room.ply").exists())
+
+        self.assertEqual(caught.exception.status, "FAILED")
+        self.assertEqual([action for action, _ in backend.actions],
+                         ["claim", "heartbeat", "processing-failed"])
+        self.assertIsNone(backend.uploaded)
 
     def test_slot_is_held_before_claiming(self):
         backend = Backend()

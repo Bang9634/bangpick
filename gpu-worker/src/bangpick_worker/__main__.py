@@ -324,7 +324,18 @@ def main() -> None:
     else:
         args = parser.parse_args(argv)
     try:
+        if args.action == "build-3d-scene":
+            input_video = os.getenv("BANGPICK_INPUT_VIDEO")
+            output_ply = os.getenv("BANGPICK_OUTPUT_PLY")
+
+            if not input_video or not output_ply:
+                parser.error("BANGPICK_INPUT_VIDEO and BANGPICK_OUTPUT_PLY environment variables must be set for build-3d-scene")
+            
+            build_3d_scene(Path(input_video), Path(output_ply))
+            return
+        
         run(args, Transfers(os.getenv("BANGPICK_API_URL", ""), os.getenv("BANGPICK_MEDIA_WORKER_TOKEN", "")))
+        
     except TerminationRequested:
         parser.exit(143, "Worker terminated\n")
     except TransferError as error:
