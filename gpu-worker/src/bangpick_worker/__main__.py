@@ -53,9 +53,19 @@ def report_input_failure(transfers: Transfers, job_id: str, lease: str, retryabl
     return report_failure(transfers, job_id, lease, "input-failed", retryable)
 
 
-def report_failure(transfers: Transfers, job_id: str, lease: str, action: str, retryable: bool) -> str:
+def report_failure(transfers: Transfers, job_id: str, lease: str, action: str, retryable: bool, *, failure: InsufficientRegisteredImagesError | None = None) -> str:
+    payload = {"leaseId": lease, "retryable": retryable}
+
+    if failure is not None:
+        payload.update({
+            "code": "INSUFFICIENT_REGISTERED_IMAGES",
+            "matching": failure.matching,
+            "registeredImages": failure.registered_images,
+            "totalImages": failure.total_images
+        })
+
     try:
-        result = transfers.command(job_id, action, {"leaseId": lease, "retryable": retryable})
+        result = transfers.command(job_id, action, payload)
     except TransferError:
         raise TransferError("The backend did not confirm the failure; keep the lease file") from None
     status = result.get("status")
@@ -231,7 +241,7 @@ def process_next(args: argparse.Namespace, transfers: Transfers) -> ProcessNextR
                 retryable = False
 
             status = report_failure(
-                transfers, job_id, lease, "processing-failed", retryable
+                transfers, job_id, lease, "processing-failed", retryable, failure=failure
             )
             raise ReportedJobFailure(job_id, status, message)
         
