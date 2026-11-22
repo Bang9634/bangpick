@@ -9,6 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
+import shutil
 
 from bangpick_worker import __main__ as cli
 from bangpick_worker.__main__ import ProcessNextResult, ReportedJobFailure, process_next, run
@@ -17,7 +18,8 @@ from bangpick_worker.transfers import TransferError
 
 
 class Backend:
-    def __init__(self):
+    def __init__(self, *, matching: str | None = None):
+        self.matching = matching
         self.job_id = str(uuid4())
         self.lease = str(uuid4())
         self.actions = []
@@ -35,7 +37,10 @@ class Backend:
         self.claim_next_calls += 1
         if self.fail_claim:
             raise TransferError("Claim response unavailable")
-        return {"jobId": self.job_id, "leaseId": self.lease}
+        response = {"jobId": self.job_id, "leaseId": self.lease}
+        if self.matching is not None:
+            response["matching"] = self.matching
+        return response
 
     def command(self, job_id, action, payload):
         self.actions.append((action, payload))
@@ -106,6 +111,55 @@ class ProcessNextTests(unittest.TestCase):
         self.assertEqual(backend.claim_next_calls, 1)
         self.assertEqual([action for action, _ in backend.actions],
                          ["claim", "heartbeat", "result-upload", "result-complete"])
+
+
+    @unittest.skipUnless(
+        os.getenv("BANGPICK_RUN_GPU_TEST") == "1",
+        "대표 영상 GPU 테스트는 별도로 실행합니다.",
+    )
+
+    def test_process_next_builds_scene_from_local_video(self):
+        video_path = os.getenv("BANGPICK_TEST_VIDEO")
+        work_path = os.getenv("BANGPICK_TEST_WORK_DIR")
+        self.assertTrue(video_path, "BANGPICK_TEST_VIDEO에 대표 영상 경로를 지정하세요.")
+        self.assertTrue(work_path, "BANGPICK_TEST_WORK_DIR에 결과를 보관할 폴더를 지정하세요.")
+
+        video = Path(video_path).resolve()
+        work_dir = Path(work_path).resolve()
+        self.assertTrue(video.is_file(), f"대표 영상을 찾을 수 없습니다: {video}")
+
+        backend = Backend(matching="exhaustive")
+        expected_ply = work_dir / backend.job_id / "attempts" / backend.lease / "room.ply"
+
+        # -- 뒤의 명령은 supervisor가 별도 프로세스로 실행한다.
+        arguments = [
+            "bangpick-worker", "process-next", "--work-dir", str(work_dir),
+            "--", sys.executable, "-m", "bangpick_worker", "build-3d-scene", "--matching", "{matching}"
+        ]
+
+        def download_local_video(grant, target):
+            shutil.copyfile(video, target)
+
+        # 실제 OCI 전송만 대체한다. 생성된 PLY는 검토할 수 있도록 디스크에 남긴다.
+        with (
+            patch.object(sys, "argv", arguments),
+            patch.object(cli, "Transfers", return_value=backend),
+            patch.object(backend, "download", side_effect=download_local_video),
+            patch.object(backend, "upload") as upload,
+        ):
+            cli.main()
+
+        self.assertEqual(backend.claim_next_calls, 1)
+        self.assertTrue(expected_ply.is_file(), f"결과 PLY가 없습니다: {expected_ply}")
+
+        upload.assert_called_once()
+        self.assertEqual(upload.call_args.args[1], expected_ply)
+
+        actions = [action for action, _ in backend.actions]
+        self.assertIn("heartbeat", actions)
+        self.assertEqual(actions[-2:], ["result-upload", "result-complete"])
+        print(f"검증한 PLY: {expected_ply}")
+
 
     def test_build_3d_scene_reaches_preprocessing_and_reports_failure(self):
         backend = Backend()

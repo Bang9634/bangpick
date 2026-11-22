@@ -94,7 +94,7 @@ def download_assigned(job_id: str, lease: str | None, directory: Path, transfers
     return lease, target
 
 
-def download_next_job(work_dir: Path, transfers: Transfers) -> tuple[str, str, Path] | None:
+def download_next_job(work_dir: Path, transfers: Transfers) -> tuple[str, str, Path, str] | None:
     work_dir.mkdir(parents=True, exist_ok=True)
     next_job = transfers.claim_next()
     if next_job is None:
@@ -115,7 +115,8 @@ def download_next_job(work_dir: Path, transfers: Transfers) -> tuple[str, str, P
         raise ReportedJobFailure(job_id, status, f"Could not save the lease for job {job_id}") from error
     print(f"Claimed job {job_id}")
     lease, source = download_assigned(job_id, lease, directory, transfers, True)
-    return job_id, lease, source
+    matching = next_job.get("matching", "sequential")
+    return job_id, lease, source, matching
 
 
 def validate_ply(ply: Path) -> int:
@@ -145,7 +146,7 @@ def complete_result(job_id: str, lease: str, transfers: Transfers) -> None:
     print(f"Result recorded for job {job_id}")
 
 
-def build_3d_scene(input_video: Path, output_ply: Path) -> Path:
+def build_3d_scene(input_video: Path, output_ply: Path, *, matching: str = "sequential") -> Path:
     """영상에서 프레임을 추출하고 COLMAP로 촬영 위치와 방향을 추정한 뒤 3DGS로 학습하여 PLY 파일경로를 반환"""
     if output_ply.exists():
         raise FileExistsError(f"PLY 출력 파일이 이미 존재합니다: {output_ply}")
@@ -156,7 +157,7 @@ def build_3d_scene(input_video: Path, output_ply: Path) -> Path:
     training_dir = attempt_dir / "3dgs"
 
     extract_frames(input_video, images_dir)
-    model_dir = estimate_camera_poses(images_dir, colmap_dir)
+    model_dir = estimate_camera_poses(images_dir, colmap_dir, matching=matching)
     generated_ply = train_3dgs(images_dir, model_dir, training_dir)
     return generated_ply.rename(output_ply)
 
@@ -175,11 +176,18 @@ def process_next(args: argparse.Namespace, transfers: Transfers) -> ProcessNextR
         claimed = download_next_job(args.work_dir, transfers)
         if claimed is None:
             return ProcessNextResult.NO_JOB
-        job_id, lease, source = claimed
+        job_id, lease, source, matching = claimed
         output = args.work_dir / job_id / "attempts" / lease / "room.ply"
         try:
-            result = supervise_in_slot(job_id, lease, args.work_dir, args.processor, transfers,
+            if matching not in ("sequential", "exhaustive"):
+                raise ProcessStartError("COLMAP matching must be sequential or exhaustive")
+
+            command = [matching if argument == "{matching}" else argument
+                       for argument in args.processor]
+
+            result = supervise_in_slot(job_id, lease, args.work_dir, command, transfers,
                                        input_video=source, output_ply=output)
+            
         except ProcessStartError as error:
             status = report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
             raise ReportedJobFailure(job_id, status, str(error)) from error
@@ -307,9 +315,11 @@ def main() -> None:
                                  help="Retry a failed attempt, up to three total attempts")
         if action in {"run-process", "process-next", "work-loop"}:
             command.epilog = "Put -- before the local processing command."
-    commands.add_parser("build-3d-scene", 
+    scene_command = commands.add_parser("build-3d-scene", 
                         help="Build a 3D scene from the input video and save the output PLY",)
-        
+    scene_command.add_argument("--matching", choices=["sequential", "exhaustive"], default="sequential",
+                               help="COLMAP matching strategy (default: sequential)")    
+    
     argv = sys.argv[1:]
     if argv[:1] in (["run-process"], ["process-next"], ["work-loop"]):
         if "--" not in argv:
@@ -331,7 +341,7 @@ def main() -> None:
             if not input_video or not output_ply:
                 parser.error("BANGPICK_INPUT_VIDEO and BANGPICK_OUTPUT_PLY environment variables must be set for build-3d-scene")
             
-            build_3d_scene(Path(input_video), Path(output_ply))
+            build_3d_scene(Path(input_video), Path(output_ply), matching=args.matching)
             return
         
         run(args, Transfers(os.getenv("BANGPICK_API_URL", ""), os.getenv("BANGPICK_MEDIA_WORKER_TOKEN", "")))

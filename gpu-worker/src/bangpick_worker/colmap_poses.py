@@ -11,6 +11,25 @@ from typing import Literal
 class ColmapError(Exception):
     """COLMAP 실행 또는 결과 확인 실패."""
 
+class InsufficientRegisteredImagesError(ColmapError):
+    """COLMAP이 등록 이미지 수가 학습 기준에 미달."""
+
+    def __init__(
+        self,
+        *,
+        registered_images: int,
+        total_images: int,
+        matching: str,
+    ) -> None:
+        self.registered_images = registered_images
+        self.total_images = total_images
+        self.matching = matching
+
+        registered_ratio = registered_images / total_images
+        super().__init__(
+            f"{total_images}장 중 {registered_images}장 사용 가능 "
+            f"({registered_ratio:.1%}). 학습 기준은 100장 이상 및 20% 이상"
+        )
 
 def _run_colmap(executable: str, command: str, *arguments: str) -> str:
 
@@ -162,10 +181,12 @@ def estimate_camera_poses(
         )
         print(f"COLMAP: {registration}")
 
-        # 100장 이상, 전체의 50% 이상이 모두 등록돼야 학습을 시작
-        if registered_images < 100 or registered_ratio < 0.5:
-            raise ColmapError(
-                f"{registration}. 학습 기준은 100장 이상 및 50% 이상입니다."
+         # 100장 이상, 전체의 20% 이상이 모두 등록돼야 학습을 시작
+        if registered_images < 100 or registered_ratio < 0.2:
+            raise InsufficientRegisteredImagesError(
+                registered_images=registered_images,
+                total_images=total_images,
+                matching=matching,
             )
 
         model_path = Path("sparse") / selected
