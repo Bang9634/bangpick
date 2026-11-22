@@ -150,8 +150,25 @@ class MediaJobs {
     }
 
     @Transactional
-    public JobView failProcessing(UUID id, UUID lease, Boolean retryable) {
-        return failAttempt(id, lease, retryable, "PROCESSING_FAILED");
+    public JobView failProcessing(UUID id, UUID lease, Boolean retryable, String code, String matching, Integer registeredImages, Integer totalImages) {     
+        if (code == null && matching == null && registeredImages == null && totalImages == null) {
+            return failAttempt(id, lease, retryable, "PROCESSING_FAILED");
+        }
+        if (!"INSUFFICIENT_REGISTERED_IMAGES".equals(code)) {
+            throw new ResponseStatusException(BAD_REQUEST, "Unknown processing failure code");
+        }
+        if (!"sequential".equals(matching) && !"exhaustive".equals(matching)) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid COLMAP matching mode");
+        }
+        if (registeredImages == null || totalImages == null || totalImages <= 0
+                || registeredImages < 0 || registeredImages > totalImages) {
+            throw new ResponseStatusException(BAD_REQUEST, "Invalid registered image counts");
+        }
+        if (!Boolean.FALSE.equals(retryable)) {
+            throw new ResponseStatusException(BAD_REQUEST, "Registration failure requires user approval to retry");
+        }
+
+        return failAttempt(id, lease, false, code);
     }
 
     /**
