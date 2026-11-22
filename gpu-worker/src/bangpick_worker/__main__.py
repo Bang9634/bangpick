@@ -3,6 +3,7 @@
 import argparse
 from enum import Enum
 import os
+import json
 from pathlib import Path
 import signal
 import sys
@@ -14,7 +15,7 @@ from .transfers import CHUNK_SIZE, PermanentTransferError, TransferError, Transf
 from .supervisor import ProcessStartError, local_processing_slot, renew_lease, supervise, supervise_in_slot
 
 from .preprocess import extract_frames
-from .colmap_poses import estimate_camera_poses
+from .colmap_poses import InsufficientRegisteredImagesError ,estimate_camera_poses
 from .train_3dgs import train_3dgs
 
 class ProcessNextResult(Enum):
@@ -341,7 +342,23 @@ def main() -> None:
             if not input_video or not output_ply:
                 parser.error("BANGPICK_INPUT_VIDEO and BANGPICK_OUTPUT_PLY environment variables must be set for build-3d-scene")
             
-            build_3d_scene(Path(input_video), Path(output_ply), matching=args.matching)
+            try:
+                build_3d_scene(Path(input_video), Path(output_ply), matching=args.matching)
+
+            except InsufficientRegisteredImagesError as error:
+                failure = {
+                    "code": "INSUFFICIENT_REGISTERED_IMAGES",
+                    "matching": error.matching,
+                    "registeredImages": error.registered_images,
+                    "totalImages": error.total_images,
+                }
+
+                failure_path = Path(output_ply).parent / "failure.json"
+                temporary_path = failure_path.with_suffix(".json.tmp")
+                temporary_path.write_text(json.dumps(failure), encoding="utf-8")
+                temporary_path.replace(failure_path)
+
+                parser.exit(1, f"{error}\n")
             return
         
         run(args, Transfers(os.getenv("BANGPICK_API_URL", ""), os.getenv("BANGPICK_MEDIA_WORKER_TOKEN", "")))
