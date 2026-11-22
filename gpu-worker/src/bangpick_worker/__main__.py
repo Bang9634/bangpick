@@ -162,6 +162,34 @@ def build_3d_scene(input_video: Path, output_ply: Path, *, matching: str = "sequ
     generated_ply = train_3dgs(images_dir, model_dir, training_dir)
     return generated_ply.rename(output_ply)
 
+def read_registration_failure(path: Path) -> InsufficientRegisteredImagesError | None:
+    """이번 시도의 실패 파일에서 COLMAP 등록기준 미달 정보를 읽는다"""
+    try:
+        failure = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    if not isinstance(failure, dict):
+        return None
+    if failure.get("code") != "INSUFFICIENT_REGISTERED_IMAGES":
+        return None
+
+    matching = failure.get("matching")
+    registered = failure.get("registeredImages")
+    total = failure.get("totalImages")
+
+    if matching not in ("sequential", "exhaustive"):
+        return None
+    if type(registered) is not int or type(total) is not int:
+        return None
+    if total <= 0 or not 0 <= registered <= total:
+        return None
+
+    return InsufficientRegisteredImagesError(
+        registered_images=registered,
+        total_images=total,
+        matching=matching,
+    )
 
 def process_next(args: argparse.Namespace, transfers: Transfers) -> ProcessNextResult:
     """잠금을 점유 전부터 완료 보고까지 유지하며 작업 한 건을 처리한다.
@@ -193,8 +221,20 @@ def process_next(args: argparse.Namespace, transfers: Transfers) -> ProcessNextR
             status = report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
             raise ReportedJobFailure(job_id, status, str(error)) from error
         if result != 0:
-            status = report_failure(transfers, job_id, lease, "processing-failed", args.retryable)
-            raise ReportedJobFailure(job_id, status, f"Processing command exited with code {result}")
+            failure = read_registration_failure(output.parent / "failure.json")
+
+            if failure is None:
+                message = f"Processing command exited with code {result}"
+                retryable = args.retryable
+            else:
+                message = f"COLMAP {failure.matching}: {failure}"
+                retryable = False
+
+            status = report_failure(
+                transfers, job_id, lease, "processing-failed", retryable
+            )
+            raise ReportedJobFailure(job_id, status, message)
+        
         try:
             validate_ply(output)
         except (TransferError, OSError) as error:
