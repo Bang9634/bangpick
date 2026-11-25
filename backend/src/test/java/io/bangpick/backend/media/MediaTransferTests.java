@@ -94,7 +94,7 @@ class MediaTransferTests {
         send(400, root, OWNER, Map.of("sizeBytes", 123, "contentType", "text/html"));
 
         JsonNode started = body(send(200, root, OWNER, video));
-        String id = started.path("jobId").asText();
+        String id = started.path("jobId").asString();
         String ownerPath = root + "/" + id;
         String workerPath = "/internal" + ownerPath;
         String inputWrite = url(started.path("transfer"));
@@ -104,14 +104,14 @@ class MediaTransferTests {
         send(409, ownerPath + "/preview", OWNER, Map.of());
         send(401, workerPath + "/claim", OWNER, Map.of());
         storage.put(inputWrite, 123);
-        assertThat(body(send(200, ownerPath + "/input-complete", OWNER, Map.of())).path("status").asText())
+        assertThat(body(send(200, ownerPath + "/input-complete", OWNER, Map.of())).path("status").asString())
                 .isEqualTo("QUEUED");
         assertThat(storage.permissions(inputWrite)).isNull();
-        assertThat(body(send(200, ownerPath + "/input-complete", OWNER, Map.of())).path("status").asText())
+        assertThat(body(send(200, ownerPath + "/input-complete", OWNER, Map.of())).path("status").asString())
                 .isEqualTo("QUEUED");
 
         var claimed = body(send(200, workerPath + "/claim", WORKER, Map.of()));
-        String lease = claimed.path("leaseId").asText();
+        String lease = claimed.path("leaseId").asString();
         assertThat(storage.permissions(url(claimed.path("transfer"))))
                 .isEqualTo(new FakeStorage.Permissions(sourceKey, MediaStorage.Access.READ));
         send(409, workerPath + "/claim", WORKER, Map.of());
@@ -132,7 +132,7 @@ class MediaTransferTests {
         send(200, workerPath + "/result-complete", WORKER, Map.of("leaseId", lease));
 
         assertThat(storage.permissions(resultUrl)).isNull();
-        assertThat(body(send(200, ownerPath, OWNER, null)).path("status").asText()).isEqualTo("RESULT_READY");
+        assertThat(body(send(200, ownerPath, OWNER, null)).path("status").asString()).isEqualTo("RESULT_READY");
         send(401, ownerPath + "/preview", WORKER, Map.of());
         var preview = send(200, ownerPath + "/preview", OWNER, Map.of());
         assertThat(preview.headers().firstValue("Cache-Control")).contains("no-store");
@@ -145,7 +145,7 @@ class MediaTransferTests {
     @Test
     void incorrectlySizedInputDoesNotBecomeAJobTheWorkerCanClaim() throws Exception {
         var started = body(send(200, "/media/jobs", OWNER, Map.of("sizeBytes", 30, "contentType", "video/webm")));
-        String id = started.path("jobId").asText();
+        String id = started.path("jobId").asString();
         String inputWrite = url(started.path("transfer"));
         storage.put(inputWrite, 31);
         send(409, "/media/jobs/" + id + "/input-complete", OWNER, Map.of());
@@ -188,5 +188,5 @@ class MediaTransferTests {
     }
 
     private JsonNode body(HttpResponse<String> response) { return json.readTree(response.body()); }
-    private String url(JsonNode transfer) { return transfer.path("url").asText(); }
+    private String url(JsonNode transfer) { return transfer.path("url").asString(); }
 }
