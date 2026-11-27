@@ -430,6 +430,29 @@ class MediaTransferTests {
     }
 
     @Test
+    void registrationFailureRejectsAutomaticRetryThenRecordsReason() throws Exception {
+        String id = queueVideo();
+        String workerPath = "/internal/media/jobs/" + id;
+        String lease = body(send(200, workerPath + "/claim", WORKER, Map.of())).path("leaseId").asText();
+        var report = new java.util.HashMap<String, Object>(Map.of(
+                "leaseId", lease, "retryable", true, "code", "INSUFFICIENT_REGISTERED_IMAGES",
+                "matching", "sequential", "registeredImages", 2, "totalImages", 495));
+
+        send(400, workerPath + "/processing-failed", WORKER, report);
+        assertThat(jdbc.queryForObject("SELECT status FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("PROCESSING");
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM media_jobs WHERE id = ?", String.class, id))
+                .isNull();
+
+        report.put("retryable", false);
+        send(200, workerPath + "/processing-failed", WORKER, report);
+        assertThat(jdbc.queryForObject("SELECT status FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM media_jobs WHERE id = ?", String.class, id))
+                .isEqualTo("INSUFFICIENT_REGISTERED_IMAGES");
+    }
+
+    @Test
     void processingFailureUsesCurrentLeaseAndRetryPolicy() throws Exception {
         String id = queueVideo();
         String workerPath = "/internal/media/jobs/" + id;
