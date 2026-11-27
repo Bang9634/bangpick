@@ -19,14 +19,15 @@ import org.springframework.util.StringUtils;
 @EnableConfigurationProperties(MediaConfiguration.Settings.class)
 class MediaConfiguration {
     @ConfigurationProperties("bangpick.media")
-    record Settings(String devToken, String workerToken, String namespace, String bucket,
+    record Settings(String devToken, String workerToken, String recoveryToken, String namespace, String bucket,
                     String region, String configFile, String profile) {
         @Override public String toString() { return "MediaSettings[redacted]"; }
     }
 
     @Bean
     MediaAccess mediaAccess(Settings settings, @Value("${bangpick.auth.enabled:false}") boolean memberLoginEnabled) {
-        return new MediaAccess(memberLoginEnabled, settings.devToken(), settings.workerToken());
+        return new MediaAccess(memberLoginEnabled, settings.devToken(), settings.workerToken(),
+                settings.recoveryToken());
     }
 
     @Bean

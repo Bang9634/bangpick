@@ -31,6 +31,12 @@ class MediaController {
     record ResultRequest(UUID leaseId, Long sizeBytes) {
         @Override public String toString() { return "ResultRequest[sizeBytes=" + sizeBytes + "]"; }
     }
+    record FailureRequest(UUID leaseId, Boolean retryable) {
+        @Override public String toString() { return "FailureRequest[retryable=" + retryable + "]"; }
+    }
+    record RecoveryRequest(UUID leaseId, Boolean previousExecutionStopped, Boolean retryable) {
+        @Override public String toString() { return "RecoveryRequest[redacted]"; }
+    }
 
     @PostMapping("/media/jobs")
     ResponseEntity<MediaJobs.Upload> start(@AuthenticationPrincipal MemberPrincipal principal,
@@ -65,6 +71,42 @@ class MediaController {
                                           @PathVariable UUID jobId, @RequestBody LeaseRequest request) {
         access.requireWorker(token);
         return noStore(jobs.claim(jobId, request.leaseId()));
+    }
+
+    @PostMapping("/internal/media/jobs/claim-next")
+    ResponseEntity<MediaJobs.NextClaim> claimNext(@RequestHeader(value = "Authorization", required = false) String token) {
+        access.requireWorker(token);
+        return jobs.claimNext().map(MediaController::noStore)
+                .orElseGet(() -> ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build());
+    }
+
+    @PostMapping("/internal/media/jobs/{jobId}/input-failed")
+    ResponseEntity<MediaJobs.JobView> inputFailed(@RequestHeader(value = "Authorization", required = false) String token,
+                                                  @PathVariable UUID jobId, @RequestBody FailureRequest request) {
+        access.requireWorker(token);
+        return noStore(jobs.failInput(jobId, request.leaseId(), request.retryable()));
+    }
+
+    @PostMapping("/internal/media/jobs/{jobId}/processing-failed")
+    ResponseEntity<MediaJobs.JobView> processingFailed(@RequestHeader(value = "Authorization", required = false) String token,
+                                                       @PathVariable UUID jobId, @RequestBody FailureRequest request) {
+        access.requireWorker(token);
+        return noStore(jobs.failProcessing(jobId, request.leaseId(), request.retryable()));
+    }
+
+    @PostMapping("/internal/media/jobs/{jobId}/recover-expired")
+    ResponseEntity<MediaJobs.JobView> recoverExpired(@RequestHeader(value = "Authorization", required = false) String token,
+                                                     @PathVariable UUID jobId, @RequestBody RecoveryRequest request) {
+        access.requireRecovery(token);
+        return noStore(jobs.recoverExpired(jobId, request.leaseId(),
+                request.previousExecutionStopped(), request.retryable()));
+    }
+
+    @PostMapping("/internal/media/jobs/{jobId}/heartbeat")
+    ResponseEntity<MediaJobs.LeaseHeartbeat> heartbeat(@RequestHeader(value = "Authorization", required = false) String token,
+                                                       @PathVariable UUID jobId, @RequestBody LeaseRequest request) {
+        access.requireWorker(token);
+        return noStore(jobs.heartbeat(jobId, request.leaseId()));
     }
 
     @PostMapping("/internal/media/jobs/{jobId}/result-upload")

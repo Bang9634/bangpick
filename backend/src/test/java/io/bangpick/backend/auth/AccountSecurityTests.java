@@ -37,6 +37,7 @@ import tools.jackson.databind.ObjectMapper;
         "bangpick.media.enabled=true",
         "bangpick.media.dev-token=" + AccountSecurityTests.DEV_TOKEN,
         "bangpick.media.worker-token=" + AccountSecurityTests.WORKER_TOKEN,
+        "bangpick.media.recovery-token=" + AccountSecurityTests.RECOVERY_TOKEN,
         "spring.datasource.url=jdbc:h2:mem:accounts;MODE=MySQL;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa", "spring.datasource.password="
 })
@@ -44,6 +45,7 @@ import tools.jackson.databind.ObjectMapper;
 class AccountSecurityTests {
     static final String DEV_TOKEN = "example-development-token-for-tests-123";
     static final String WORKER_TOKEN = "example-worker-token-for-tests-456";
+    static final String RECOVERY_TOKEN = "example-recovery-token-for-tests-789";
 
     @Autowired MockMvc mvc;
     @Autowired MemberRepository members;
@@ -143,6 +145,32 @@ class AccountSecurityTests {
         mvc.perform(post(claim).contextPath("/api").header("Authorization", "Bearer " + WORKER_TOKEN)
                         .contentType("application/json").content("{}"))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void queueRoutesAcceptOnlyTheirRoleTokenWithoutBrowserCsrf() throws Exception {
+        String missingJob = "/api/internal/media/jobs/" + UUID.randomUUID();
+        String leaseBody = "{\"leaseId\":\"" + UUID.randomUUID() + "\",\"retryable\":true}";
+        String worker = "Bearer " + WORKER_TOKEN;
+        for (String route : List.of("/heartbeat", "/input-failed", "/processing-failed")) {
+            mvc.perform(post(missingJob + route).contextPath("/api")
+                            .header("Authorization", worker).contentType("application/json").content(leaseBody))
+                    .andExpect(status().isNotFound());
+        }
+        mvc.perform(post("/api/internal/media/jobs/claim-next").contextPath("/api")
+                        .header("Authorization", worker))
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).isBetween(200, 299));
+
+        String recovery = "{\"leaseId\":\"" + UUID.randomUUID()
+                + "\",\"previousExecutionStopped\":true,\"retryable\":true}";
+        mvc.perform(post(missingJob + "/recover-expired").contextPath("/api")
+                        .header("Authorization", "Bearer " + WORKER_TOKEN)
+                        .contentType("application/json").content(recovery))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post(missingJob + "/recover-expired").contextPath("/api")
+                        .header("Authorization", "Bearer " + RECOVERY_TOKEN)
+                        .contentType("application/json").content(recovery))
+                .andExpect(status().isNotFound());
     }
 
     private static MockHttpSession memberSession(UUID memberId) {

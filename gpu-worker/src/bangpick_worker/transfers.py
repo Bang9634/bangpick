@@ -15,6 +15,10 @@ class TransferError(Exception):
     """A user-facing failure that never includes a grant URL or credential."""
 
 
+class PermanentTransferError(TransferError):
+    """An input response that cannot be fixed by retrying the same transfer."""
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # 백엔드 토큰이나 임시 URL이 다른 주소로 전달되는 것을 막는다.
@@ -42,6 +46,26 @@ class Transfers:
         self.api = api.rstrip("/")
         self.token = token
         self.opener = build_opener(NoRedirect())
+
+    def claim_next(self) -> dict | None:
+        request = Request(
+            f"{self.api}/internal/media/jobs/claim-next",
+            method="POST",
+            data=b"",
+            headers={"Authorization": f"Bearer {self.token}"},
+        )
+        with self._open(request, "Backend", 45) as response:
+            if response.status == 204:
+                return None
+            if response.status != 200:
+                raise TransferError("Backend returned an unexpected response")
+            try:
+                result = json.load(response)
+            except ValueError:
+                raise TransferError("Backend returned an invalid response") from None
+        if not isinstance(result, dict):
+            raise TransferError("Backend returned an invalid response")
+        return result
 
     def command(self, job_id: str, action: str, payload: dict) -> dict:
         request = Request(
@@ -108,10 +132,10 @@ class Transfers:
     def _grant(grant: dict, method: str, limit: int) -> tuple[str, int]:
         url, size = grant.get("url"), grant.get("sizeBytes")
         if not isinstance(url, str):
-            raise TransferError("Invalid object transfer URL")
+            raise PermanentTransferError("Invalid object transfer URL")
         parsed = urlsplit(url)
         if (grant.get("method") != method or parsed.scheme != "https" or not parsed.hostname
                 or parsed.username is not None or parsed.password is not None
                 or parsed.fragment or type(size) is not int or not 0 < size <= limit):
-            raise TransferError("Invalid object transfer grant")
+            raise PermanentTransferError("Invalid object transfer grant")
         return url, size

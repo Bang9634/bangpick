@@ -28,7 +28,12 @@ class SecurityConfiguration {
         PATHS.matcher(HttpMethod.POST, "/media/jobs/*/preview")
     };
     private static final PathPatternRequestMatcher[] WORKER_MEDIA = {
+        PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/claim-next"),
         PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/*/claim"),
+        PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/*/input-failed"),
+        PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/*/processing-failed"),
+        PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/*/recover-expired"),
+        PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/*/heartbeat"),
         PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/*/result-upload"),
         PATHS.matcher(HttpMethod.POST, "/internal/media/jobs/*/result-complete")
     };
@@ -40,7 +45,7 @@ class SecurityConfiguration {
             routes.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                     .requestMatchers(HttpMethod.GET, "/auth/options", "/actuator/health",
                             "/actuator/health/liveness", "/actuator/health/readiness").permitAll()
-                    // These three routes authenticate the Worker bearer token in MediaController.
+                    // Internal routes authenticate Worker or recovery tokens in MediaController.
                     .requestMatchers(WORKER_MEDIA).permitAll();
             if (settings.enabled()) {
                 routes.requestMatchers(HttpMethod.GET, GoogleLoginConfiguration.LOGIN_PATH,
